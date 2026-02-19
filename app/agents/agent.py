@@ -5,7 +5,10 @@ Design Patterns:
 - Strategy Pattern: ExecutionMode + CleanupPolicy determine runtime behaviour.
 - Template Method: chat_stream defines the skeleton (analyse → plan → execute →
   stream → cleanup); subclasses or config change the individual steps.
-- Observer Pattern: SmartAgentHook observes tool calls and writes to the store.
+- Observer/Interceptor Pattern: SmartAgentHook intercepts tool results via the
+  Strands AfterToolCallEvent, stores full payloads to the session filesystem,
+  and replaces the conversation result with a compact receipt (preview + gap
+  analysis) so the context window stays lean.
 - Factory Method: _create_* helpers let subclasses override component creation.
 
 Modes:
@@ -20,6 +23,7 @@ Execution:
 """
 
 import asyncio
+import json
 import logging
 import uuid
 from collections.abc import AsyncIterator
@@ -35,9 +39,11 @@ from strands.agent.conversation_manager import (
     SlidingWindowConversationManager,
 )
 from strands.hooks import HookProvider
+from strands.hooks.events import AfterToolCallEvent
 from strands.models import BedrockModel
 from strands.tools.executors import SequentialToolExecutor
 
+from app.agents.result_compactor import PASSTHROUGH_TOOLS, ResultCompactor
 from app.agents.session_fs import (
     CleanupPolicy,
     SessionLifecycle,
@@ -250,7 +256,14 @@ Rules:
 # ---------------------------------------------------------------------------
 
 class SmartAgentHook(HookProvider):
-    """Hook that observes tool calls and writes results to the session store."""
+    """Intercepts tool results, stores full payloads to the session filesystem,
+    and replaces the conversation result with a compact receipt so context
+    stays lean.
+
+    For results below the compaction threshold or from passthrough tools
+    (session_grep, read_session_file, …) the original result passes through
+    unmodified.
+    """
 
     def __init__(
         self,
@@ -261,37 +274,82 @@ class SmartAgentHook(HookProvider):
         self._streamer = streamer
         self._mode = mode
         self._session_store = session_store
+        self._compactor = ResultCompactor()
         self._completed_calls: list[str] = []
 
-    async def after_tool_call(
-        self,
-        tool_name: str,
-        tool_args: dict[str, Any],
-        result: Any,
-        error: Exception | None = None,
-    ) -> None:
-        """After tool call – emit event and store to filesystem."""
+    # -- Strands HookProvider protocol --------------------------------------
+
+    def register_hooks(self, registry, **kwargs) -> None:  # type: ignore[override]
+        """Register with the Strands hook system."""
+        registry.add_callback(AfterToolCallEvent, self._on_after_tool_call)
+
+    # -- event handler -------------------------------------------------------
+
+    async def _on_after_tool_call(self, event: AfterToolCallEvent) -> None:
+        """After tool call – stream UI events, store full result, compact."""
+        tool_name: str = event.tool_use["name"]
+        tool_args: dict[str, Any] = event.tool_use.get("input", {})
+        result = event.result
+        error = event.exception
+
+        # 1. Emit streaming events for the frontend
         if isinstance(self._streamer, AGUIStreamer):
             await self._streamer.tool_call_end(tool_name)
             if error:
                 await self._streamer.tool_result(tool_name, "", error=str(error))
             else:
-                await self._streamer.tool_result(tool_name, str(result)[:1000])
+                text = _extract_text(result)
+                await self._streamer.tool_result(tool_name, text[:1000])
 
-        if not error:
-            self._completed_calls.append(tool_name)
+        if error:
+            return
 
-        # Persist to session store in agentic / auto mode
-        if (
+        self._completed_calls.append(tool_name)
+
+        # 2. Decide whether to offload to the filesystem
+        should_offload = (
             self._mode in (ExecutionMode.AGENTIC, ExecutionMode.AUTO)
-            and self._session_store
-            and not error
-        ):
-            await self._session_store.store_tool_result(
-                tool_name=tool_name,
-                tool_args=tool_args,
-                result=result,
-            )
+            and self._session_store is not None
+            and tool_name not in PASSTHROUGH_TOOLS
+        )
+        if not should_offload:
+            return
+
+        # 3. Store the full result on the session filesystem
+        text = _extract_text(result)
+        entry = await self._session_store.store_tool_result(
+            tool_name=tool_name,
+            tool_args=tool_args,
+            result=text,
+        )
+
+        # 4. Replace the conversation result with a compact receipt
+        if self._compactor.should_compact(tool_name, text):
+            receipt = self._compactor.compact(entry.entry_id, text)
+            event.result = {
+                "content": [{"text": receipt.format()}],
+                "status": result.get("status", "success"),
+                "toolUseId": result["toolUseId"],
+            }
+
+
+def _extract_text(result: Any) -> str:
+    """Pull plain text out of a Strands ToolResult (or fall back to str)."""
+    if isinstance(result, str):
+        return result
+    if isinstance(result, dict):
+        content = result.get("content", [])
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, dict):
+                if "text" in block:
+                    parts.append(block["text"])
+                elif "json" in block:
+                    parts.append(json.dumps(block["json"], default=str))
+            elif isinstance(block, str):
+                parts.append(block)
+        return "\n".join(parts) if parts else str(result)
+    return str(result)
 
 
 # ---------------------------------------------------------------------------
@@ -578,15 +636,24 @@ You are in FAST mode:
 You are in AGENTIC mode:
 - Be thorough and methodical
 - Use multiple sources when needed
-- Store findings to session filesystem
 - Synthesize comprehensive, accurate answers
 - Cite your sources
 - Parallelize independent tool calls when beneficial
 
-Session tools available:
-- session_grep(pattern) – search across all stored results
-- session_summary()     – see what data has been collected
-- read_session_file(entry_id) – read a specific stored result
+## Session filesystem
+
+Tool results are automatically stored on a session filesystem. Instead of the
+full result you receive a **compact receipt** with:
+- A short preview (2-3 lines)
+- A gap analysis describing what information is NOT in the preview
+
+Use the gap analysis to decide whether you need more detail. If so, drill in:
+- session_grep(pattern)              – regex search across all stored results
+- read_session_file(entry_id)        – read a specific stored result in full
+- session_summary()                  – see what data has been collected so far
+
+Only retrieve what you actually need. The receipt often contains enough signal
+to answer without a follow-up read.
 """
 
     # -- cleanup --------------------------------------------------------------
