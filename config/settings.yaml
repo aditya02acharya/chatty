@@ -1,0 +1,71 @@
+# Default configuration for agentic-chatbot
+# Values can be overridden by environment variables
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  workers: 4
+  max_concurrent_requests: 2000
+  keepalive_timeout: 75
+  graceful_shutdown_timeout: 30
+
+bedrock:
+  region: "us-east-1"
+  profile: null  # Use default AWS credentials
+  default_model: "anthropic.claude-sonnet-4-20250514"
+  models:
+    claude: "anthropic.claude-sonnet-4-20250514"
+    claude_opus: "anthropic.claude-opus-4-20250514"
+    claude_haiku: "anthropic.claude-haiku-4-20250514"
+    llama: "meta.llama-3-1-405b-instruct"
+    mistral: "mistral.mistral-large-2407"
+    nova: "us.amazon.nova-pro-v1:0"
+  auth_method: "iam"  # Options: iam, api_key
+  timeout: 60
+  max_retries: 3
+  # Converse API parameters
+  inference_config:
+    max_tokens: 4096
+    temperature: 0.7
+    top_p: 0.9
+    stop_sequences: []
+
+mcp:
+  timeout: 30
+  max_retries: 2
+  # Remote MCP endpoints (Streamable HTTP)
+  endpoints: []
+  # Example remote tool server (uncomment to use)
+  # - name: "remote-tools"
+  #   url: "${MCP_REMOTE_URL}"
+  #   headers:
+  #     Authorization: "Bearer ${MCP_TOKEN}"
+
+agent:
+  max_iterations: 10
+  tool_timeout: 30
+  reflection_enabled: true
+  # System prompt for the supervisor
+  system_prompt: |
+    You are a helpful AI assistant with access to various tools.
+    Use tools when needed to provide accurate and helpful responses.
+    Always explain your reasoning when using tools.
+
+agui:
+  buffer_size: 8192
+  heartbeat_interval: 15
+  event_types:
+    - thinking
+    - decided
+    - tool_call
+    - tool_result
+    - content
+    - done
+    - error
+
+logging:
+  level: "INFO"
+  format: "json"  # Options: json, text
+  include_timestamp: true
+  include_caller: true
+  telemetry_enabled: false

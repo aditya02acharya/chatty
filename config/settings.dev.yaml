@@ -1,0 +1,13 @@
+# Development environment overrides
+server:
+  host: "127.0.0.1"
+  port: 8000
+  workers: 1
+  reload: true
+
+logging:
+  level: "DEBUG"
+  format: "text"
+
+agent:
+  reflection_enabled: true
