@@ -1,6 +1,13 @@
 """
 Agent mode selection and execution strategy.
 
+Design Patterns:
+- Strategy Pattern: ExecutionMode + CleanupPolicy determine runtime behaviour.
+- Template Method: chat_stream defines the skeleton (analyse → plan → execute →
+  stream → cleanup); subclasses or config change the individual steps.
+- Observer Pattern: SmartAgentHook observes tool calls and writes to the store.
+- Factory Method: _create_* helpers let subclasses override component creation.
+
 Modes:
 - fast: User explicitly requests fast mode
 - agentic: User explicitly requests agentic mode
@@ -12,6 +19,9 @@ Execution:
 - Hybrid as needed
 """
 
+import asyncio
+import logging
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -28,11 +38,17 @@ from strands.hooks import HookProvider
 from strands.models import BedrockModel
 from strands.tools.executors import SequentialToolExecutor
 
-from app.agents.session_fs import SessionFileSystem, create_session_filesystem
+from app.agents.session_fs import (
+    CleanupPolicy,
+    SessionLifecycle,
+    SessionStore,
+)
 from app.agents.tools import MCPManager
 from app.core.config import settings
 from app.core.exceptions import AgentError
 from app.streaming import AGUIStreamer
+
+logger = logging.getLogger(__name__)
 
 
 class ExecutionMode(str, Enum):
@@ -54,6 +70,10 @@ class ToolCall:
     estimated_duration: float = 1.0  # seconds
 
 
+# ---------------------------------------------------------------------------
+# Mode analyser
+# ---------------------------------------------------------------------------
+
 class ModeAnalyzer(BaseModel):
     """Analyzes query to determine appropriate mode."""
 
@@ -62,14 +82,7 @@ class ModeAnalyzer(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
 
     async def analyze_query(self, query: str) -> tuple[ExecutionMode, dict[str, Any]]:
-        """Analyze query to determine mode and strategy.
-
-        Args:
-            query: User query
-
-        Returns:
-            Tuple of (mode, analysis_result)
-        """
+        """Analyze query to determine mode and strategy."""
         prompt = f"""Analyze this query and determine the best mode:
 
 Query: "{query}"
@@ -108,6 +121,10 @@ Return JSON:
             return ExecutionMode.FAST, {"reasoning": "default", "complexity": "low"}
 
 
+# ---------------------------------------------------------------------------
+# Tool-call planner
+# ---------------------------------------------------------------------------
+
 class ToolCallPlanner(BaseModel):
     """Plans tool execution with dependency analysis."""
 
@@ -121,20 +138,13 @@ class ToolCallPlanner(BaseModel):
         available_tools: list[str],
         mode: ExecutionMode,
     ) -> list[ToolCall]:
-        """Plan tool execution with dependency analysis.
-
-        Args:
-            query: User query
-            available_tools: List of available tools
-            mode: Current execution mode
-
-        Returns:
-            List of ToolCall objects with dependencies
-        """
-        # In fast mode, just return first tool (or none)
+        """Plan tool execution with dependency analysis."""
         if mode == ExecutionMode.FAST:
-            # Check if query explicitly asks for multiple tools
-            prompt = f"""Does this query require multiple tools?
+            return await self._plan_fast(query, available_tools)
+        return await self._plan_agentic(query, available_tools)
+
+    async def _plan_fast(self, query: str, available_tools: list[str]) -> list[ToolCall]:
+        prompt = f"""Does this query require multiple tools?
 
 Query: "{query}"
 Available tools: {', '.join(available_tools[:10])}
@@ -148,21 +158,21 @@ Return JSON:
 If only 1 tool or no tools needed, return that. If multiple explicitly requested (e.g. "compare X and Y"), return all.
 """
 
-            try:
-                response = await self.model.structured_output_async(
-                    messages=[{"role": "user", "content": [{"text": prompt}]}],
-                    system_prompt="Identify required tools.",
-                )
-                result = response.content
-                tools_requested = result.get("tools_needed", [])
-                return [
-                    ToolCall(name=t, args={}, dependencies=[], independent=True)
-                    for t in tools_requested[:3]  # Max 3 in fast mode
-                ]
-            except Exception:
-                return []
+        try:
+            response = await self.model.structured_output_async(
+                messages=[{"role": "user", "content": [{"text": prompt}]}],
+                system_prompt="Identify required tools.",
+            )
+            result = response.content
+            tools_requested = result.get("tools_needed", [])
+            return [
+                ToolCall(name=t, args={}, dependencies=[], independent=True)
+                for t in tools_requested[:3]
+            ]
+        except Exception:
+            return []
 
-        # In agentic mode, do full planning
+    async def _plan_agentic(self, query: str, available_tools: list[str]) -> list[ToolCall]:
         tools_str = "\n".join(f"- {t}" for t in available_tools)
 
         prompt = f"""Plan the execution for this query:
@@ -204,65 +214,54 @@ Rules:
                 for s in steps
             ]
         except Exception:
-            # Fallback: return empty plan
             return []
 
     def group_for_execution(self, calls: list[ToolCall]) -> list[list[ToolCall]]:
-        """Group tool calls for optimal execution.
+        """Group tool calls into waves for optimal execution.
 
-        Args:
-            calls: List of ToolCall objects
-
-        Returns:
-            List of groups (each group can run in parallel)
+        Each wave contains calls whose dependencies are already satisfied.
+        Calls within a wave can run in parallel.
         """
-        groups = []
-        remaining = calls.copy()
+        groups: list[list[ToolCall]] = []
+        completed: set[str] = set()
+        remaining = list(calls)
 
         while remaining:
-            # Find all independent tools (no unmet dependencies)
             ready = [
                 c for c in remaining
-                if c.independent and all(
-                    dep not in [r.name for r in remaining]
-                    for dep in c.dependencies
-                )
+                if all(dep in completed for dep in c.dependencies)
             ]
 
-            if ready:
-                groups.append(ready)
-                # Remove ready from remaining
-                remaining = [c for c in remaining if c not in ready]
-            else:
-                # All remaining depend on each other - execute sequentially
+            if not ready:
+                # Circular dependency or unresolvable — run remaining sequentially
                 for c in remaining:
                     groups.append([c])
                 break
 
+            groups.append(ready)
+            completed.update(c.name for c in ready)
+            remaining = [c for c in remaining if c not in ready]
+
         return groups
 
 
-class SmartAgentHook(HookProvider):
-    """Hook that stores tool results to filesystem in agentic mode."""
+# ---------------------------------------------------------------------------
+# Observer: SmartAgentHook
+# ---------------------------------------------------------------------------
 
-    _streamer: AGUIStreamer
-    _mode: ExecutionMode
-    _session_fs: SessionFileSystem | None
-    _plan: list[ToolCall] | None
-    _completed_calls: list[str]
+class SmartAgentHook(HookProvider):
+    """Hook that observes tool calls and writes results to the session store."""
 
     def __init__(
         self,
         streamer: AGUIStreamer,
         mode: ExecutionMode = ExecutionMode.AUTO,
-        session_fs: SessionFileSystem | None = None,
-        plan: list[ToolCall] | None = None,
+        session_store: SessionStore | None = None,
     ):
         self._streamer = streamer
         self._mode = mode
-        self._session_fs = session_fs
-        self._plan = plan
-        self._completed_calls = []
+        self._session_store = session_store
+        self._completed_calls: list[str] = []
 
     async def after_tool_call(
         self,
@@ -271,8 +270,7 @@ class SmartAgentHook(HookProvider):
         result: Any,
         error: Exception | None = None,
     ) -> None:
-        """After tool call - emit event and store to filesystem."""
-        # Emit event
+        """After tool call – emit event and store to filesystem."""
         if isinstance(self._streamer, AGUIStreamer):
             await self._streamer.tool_call_end(tool_name)
             if error:
@@ -280,17 +278,31 @@ class SmartAgentHook(HookProvider):
             else:
                 await self._streamer.tool_result(tool_name, str(result)[:1000])
 
-        # Track completion
         if not error:
             self._completed_calls.append(tool_name)
 
-        # Store to filesystem in agentic mode
-        if self._mode in (ExecutionMode.AGENTIC, ExecutionMode.AUTO) and self._session_fs and not error:
-            await self._session_fs.store_tool_result(
+        # Persist to session store in agentic / auto mode
+        if (
+            self._mode in (ExecutionMode.AGENTIC, ExecutionMode.AUTO)
+            and self._session_store
+            and not error
+        ):
+            await self._session_store.store_tool_result(
                 tool_name=tool_name,
                 tool_args=tool_args,
                 result=result,
             )
+
+
+# ---------------------------------------------------------------------------
+# Hybrid agent
+# ---------------------------------------------------------------------------
+
+def _cleanup_policy_for_mode(mode: ExecutionMode) -> CleanupPolicy:
+    """Map execution mode to the appropriate cleanup policy (Strategy)."""
+    if mode == ExecutionMode.FAST:
+        return CleanupPolicy.ALWAYS
+    return CleanupPolicy.ALWAYS  # agentic/auto: still cleanup after each request
 
 
 class HybridChatbotAgent(BaseModel):
@@ -300,7 +312,7 @@ class HybridChatbotAgent(BaseModel):
     - Auto mode selection (agent decides)
     - Parallel execution for independent tools
     - Sequential/iterative for dependent tools
-    - Filesystem-based working memory
+    - Filesystem-based working memory with lifecycle cleanup
     - Complete, curated responses only
     """
 
@@ -309,7 +321,6 @@ class HybridChatbotAgent(BaseModel):
     session_id: str | None = Field(default=None)
     enable_mcp: bool = Field(default=True)
 
-    # Config
     max_parallel_tools: int = Field(default=5, description="Max parallel tools")
     filesystem_enabled: bool = Field(default=True)
 
@@ -322,24 +333,20 @@ class HybridChatbotAgent(BaseModel):
             model_id=self.model_id,
             region_name=settings.bedrock.region,
         )
+        self._actual_mode: ExecutionMode | None = None
+        # Lifecycle is created per-request in chat_stream / chat_complete
+        self._lifecycle: SessionLifecycle | None = None
 
-        self._session_fs: SessionFileSystem | None = None
-        self._actual_mode: ExecutionMode | None = None  # Resolved after analysis
-
-        if self.session_id and self.filesystem_enabled:
-            self._session_fs = create_session_filesystem(self.session_id)
-            self._session_fs.create_session()
+    # -- factory methods (Template Method helpers) --------------------------
 
     def _create_mode_analyzer(self) -> ModeAnalyzer:
-        """Create mode analyzer."""
         return ModeAnalyzer(model=self._bedrock_model)
 
     def _create_planner(self) -> ToolCallPlanner:
-        """Create tool call planner."""
         return ToolCallPlanner(model=self._bedrock_model)
 
-    def _create_local_tools(self) -> list:
-        """Create local tools."""
+    def _create_local_tools(self, store: SessionStore | None) -> list:
+        """Create local tools, binding them to the current session store."""
 
         @tool
         async def get_current_time() -> str:
@@ -354,20 +361,17 @@ class HybridChatbotAgent(BaseModel):
             Args:
                 pattern: Regex pattern to search
                 case_sensitive: Whether case sensitive
-
-            Returns:
-                Search results with context
             """
-            if not self._session_fs:
+            if not store:
                 return "No session filesystem available"
 
-            matches = await self._session_fs.grep(pattern, case_sensitive)
+            matches = await store.grep(pattern, case_sensitive)
             if not matches:
                 return f"No matches for: {pattern}"
 
-            results = [f"Found {len(matches)} matches in session filesystem:"]
+            results = [f"Found {len(matches)} matches:"]
             for m in matches[:20]:
-                results.append(f"\n- File: {m['filename']}")
+                results.append(f"\n- Entry: {m['entry_id']}")
                 results.append(f"  Tool: {m['tool']}")
                 results.append(f"  Match: {m['match']}")
 
@@ -376,39 +380,37 @@ class HybridChatbotAgent(BaseModel):
         @tool
         async def session_summary() -> str:
             """Get summary of session filesystem data."""
-            if not self._session_fs:
+            if not store:
                 return "No session filesystem available"
 
-            summary = await self._session_fs.get_summary()
-            files_info = "\n".join(
-                f"- {f['filename']} (from {f['source_tool']})"
-                for f in summary["files"]
-            )
-            return f"""Session: {summary['session_id']}
-Files: {summary['total_files']}
-Tools: {', '.join(set(f['source_tool'] for f in summary['files']))}
+            s = store.summary()
+            per_tool_lines = []
+            for name, info in s.get("per_tool", {}).items():
+                per_tool_lines.append(
+                    f"  - {name}: {info['count']} results, {info['total_bytes']} bytes"
+                )
 
-{files_info}
-"""
+            return (
+                f"Session: {s['session_id']}\n"
+                f"Total entries: {s['total_entries']}\n"
+                f"Tools used:\n" + "\n".join(per_tool_lines)
+            )
 
         @tool
-        async def read_session_file(filename: str) -> str:
+        async def read_session_file(entry_id: str) -> str:
             """Read a file from session filesystem.
 
             Args:
-                filename: Name of file to read
-
-            Returns:
-                File contents
+                entry_id: Entry identifier (e.g. 'search/001')
             """
-            if not self._session_fs:
+            if not store:
                 return "No session filesystem available"
 
             try:
-                data = await self._session_fs.read_file(filename)
-                return f"Contents of {filename}:\n\n{data}"
+                data = await store.read(entry_id)
+                return f"Contents of {entry_id}:\n\n{data}"
             except FileNotFoundError:
-                return f"File not found: {filename}"
+                return f"Entry not found: {entry_id}"
 
         return [
             get_current_time,
@@ -421,7 +423,7 @@ Tools: {', '.join(set(f['source_tool'] for f in summary['files']))}
         """Get list of available tool names."""
         tools = [
             t.name if hasattr(t, "name") else t.__name__
-            for t in self._create_local_tools()
+            for t in self._create_local_tools(None)
         ]
 
         if self.enable_mcp:
@@ -431,41 +433,20 @@ Tools: {', '.join(set(f['source_tool'] for f in summary['files']))}
 
         return tools
 
-    async def _execute_parallel(self, agent: Agent, calls: list[ToolCall]) -> dict[str, Any]:
-        """Execute tool calls in parallel.
-
-        Args:
-            agent: Strands agent
-            calls: Tool calls to execute
-
-        Returns:
-            Combined results
-        """
-        # For now, use agent's tool execution
-        # The agent will handle the actual tool calls
-        # This is a placeholder for parallel execution management
-        results = {}
-        for call in calls:
-            # Results will come through the agent's response
-            results[call.name] = "executed"
-        return results
+    # -- streaming entry point -----------------------------------------------
 
     async def chat_stream(
         self,
         message: str,
         request_id: str | None = None,
     ) -> AsyncIterator[str]:
-        """Process chat with streaming response (complete, not partial).
+        """Process chat with streaming response.
 
-        Args:
-            message: User message
-            request_id: Request ID
-
-        Yields:
-            SSE chunks (only when response is complete and verified)
+        Handles three exit paths:
+        1. Success  – stream completes, lifecycle cleans up.
+        2. Error    – exception propagates, lifecycle cleans up.
+        3. Cancel   – asyncio.CancelledError caught, lifecycle cleans up.
         """
-        import uuid
-
         if request_id is None:
             request_id = str(uuid.uuid4())
 
@@ -474,55 +455,75 @@ Tools: {', '.join(set(f['source_tool'] for f in summary['files']))}
         async with create_streamer(request_id) as streamer:
             await streamer.run_started()
 
-            # Step 1: Analyze mode
+            # Step 1: Resolve mode
             analyzer = self._create_mode_analyzer()
             self._actual_mode, analysis = await analyzer.analyze_query(message)
-
             if self.mode != ExecutionMode.AUTO:
                 self._actual_mode = self.mode
 
-            await streamer.thinking_start(f"Mode: {self._actual_mode.value} - {analysis.get('reasoning', '')}")
-
-            # Step 2: Plan tool calls (if any)
-            available_tools = await self._load_tools()
-            planner = self._create_planner()
-            planned_calls = await planner.plan_execution(message, available_tools, self._actual_mode)
-
-            # Step 3: Create agent
-            tools = self._create_local_tools()
-            if self.enable_mcp:
-                async with MCPManager() as mcp:
-                    mcp_tools = await mcp.load_strands_tools()
-                    tools.extend(mcp_tools)
-
-            # Choose conversation manager
-            conv_manager = NullConversationManager() if self._actual_mode == ExecutionMode.FAST else SlidingWindowConversationManager(max_messages=100)
-
-            # Choose tool executor based on planned calls
-            if self._actual_mode == ExecutionMode.FAST or not planned_calls:
-                executor = None  # Let agent decide
-            else:
-                executor = SequentialToolExecutor()  # Default to sequential
-
-            hook = SmartAgentHook(streamer, self._actual_mode, self._session_fs, planned_calls)
-
-            agent = Agent(
-                model=self._bedrock_model,
-                tools=tools,
-                system_prompt=self._get_system_prompt(),
-                tool_executor=executor,
-                conversation_manager=conv_manager,
-                hooks=[hook],
+            await streamer.thinking_start(
+                f"Mode: {self._actual_mode.value} - {analysis.get('reasoning', '')}"
             )
 
-            # Step 4: Execute and stream complete response
-            try:
-                full_response = ""
+            # Determine cleanup policy for this run
+            policy = _cleanup_policy_for_mode(self._actual_mode)
+            needs_fs = (
+                self._actual_mode in (ExecutionMode.AGENTIC, ExecutionMode.AUTO)
+                and self.filesystem_enabled
+                and self.session_id is not None
+            )
 
+            # Step 2: Enter lifecycle (creates + guarantees cleanup)
+            lifecycle = SessionLifecycle(
+                self.session_id or request_id, policy
+            ) if needs_fs else None
+
+            try:
+                store: SessionStore | None = None
+                if lifecycle:
+                    store = await lifecycle.__aenter__()
+
+                # Step 3: Plan tool calls
+                available_tools = await self._load_tools()
+                planner = self._create_planner()
+                planned_calls = await planner.plan_execution(
+                    message, available_tools, self._actual_mode
+                )
+
+                # Step 4: Build the Strands agent
+                tools = self._create_local_tools(store)
+                if self.enable_mcp:
+                    async with MCPManager() as mcp:
+                        mcp_tools = await mcp.load_strands_tools()
+                        tools.extend(mcp_tools)
+
+                conv_manager = (
+                    NullConversationManager()
+                    if self._actual_mode == ExecutionMode.FAST
+                    else SlidingWindowConversationManager(max_messages=100)
+                )
+                executor = (
+                    None
+                    if self._actual_mode == ExecutionMode.FAST or not planned_calls
+                    else SequentialToolExecutor()
+                )
+
+                hook = SmartAgentHook(streamer, self._actual_mode, store)
+
+                agent = Agent(
+                    model=self._bedrock_model,
+                    tools=tools,
+                    system_prompt=self._get_system_prompt(),
+                    tool_executor=executor,
+                    conversation_manager=conv_manager,
+                    hooks=[hook],
+                )
+
+                # Step 5: Execute and stream complete response
+                full_response = ""
                 async for chunk in agent.stream_async(message):
                     full_response += chunk
 
-                # Only stream when complete
                 await streamer.content_start()
                 await streamer.content_delta(full_response)
                 await streamer.content_end()
@@ -530,12 +531,36 @@ Tools: {', '.join(set(f['source_tool'] for f in summary['files']))}
 
                 await streamer.done()
 
+            except asyncio.CancelledError:
+                # Client disconnected – ensure cleanup runs
+                logger.info("Request %s cancelled (client disconnect)", request_id)
+                if lifecycle:
+                    lifecycle.mark_error()
+                raise
+
             except Exception as e:
+                if lifecycle:
+                    lifecycle.mark_error()
                 await streamer.error("AGENT_ERROR", str(e))
                 raise AgentError(f"Agent execution failed: {e}") from e
 
+            finally:
+                # Guarantee lifecycle cleanup regardless of exit path
+                if lifecycle:
+                    await lifecycle.__aexit__(None, None, None)
+
+    # -- non-streaming entry point -------------------------------------------
+
+    async def chat_complete(self, message: str, request_id: str) -> str:
+        """Non-streaming chat – collects the full response and returns it."""
+        full_response = ""
+        async for chunk in self.chat_stream(message, request_id):
+            full_response += chunk
+        return full_response
+
+    # -- prompt builder -------------------------------------------------------
+
     def _get_system_prompt(self) -> str:
-        """Get system prompt based on mode."""
         base = settings.agent.system_prompt
 
         if self._actual_mode == ExecutionMode.FAST:
@@ -557,10 +582,17 @@ You are in AGENTIC mode:
 - Synthesize comprehensive, accurate answers
 - Cite your sources
 - Parallelize independent tool calls when beneficial
+
+Session tools available:
+- session_grep(pattern) – search across all stored results
+- session_summary()     – see what data has been collected
+- read_session_file(entry_id) – read a specific stored result
 """
 
+    # -- cleanup --------------------------------------------------------------
+
     async def cleanup(self) -> None:
-        """Cleanup resources."""
+        """Cleanup agent-level resources (lifecycle handled per-request)."""
         pass
 
 
