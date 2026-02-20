@@ -18,18 +18,30 @@ class AgentState(BaseModel):
     request_id: str = Field(description="Unique request identifier")
     user_message: str = Field(description="Original user message")
     iteration: int = Field(default=0, description="Current iteration count")
-    max_iterations: int = Field(default=10, description="Maximum allowed iterations")
+    max_iterations: int = Field(
+        default=10, description="Maximum allowed iterations"
+    )
 
     # Decision tracking
-    last_decision: str | None = Field(default=None, description="Last decision made")
-    last_tool_used: str | None = Field(default=None, description="Last tool called")
+    last_decision: str | None = Field(
+        default=None, description="Last decision made"
+    )
+    last_tool_used: str | None = Field(
+        default=None, description="Last tool called"
+    )
 
     # Response building
-    response_parts: list[str] = Field(default_factory=list, description="Accumulated response")
+    response_parts: list[str] = Field(
+        default_factory=list, description="Accumulated response"
+    )
 
     # Timing
-    started_at: datetime = Field(default_factory=datetime.now, description="Start time")
-    finished_at: datetime | None = Field(default=None, description="Finish time")
+    started_at: datetime = Field(
+        default_factory=datetime.now, description="Start time"
+    )
+    finished_at: datetime | None = Field(
+        default=None, description="Finish time"
+    )
 
 
 class ToolCallResult(BaseModel):
@@ -40,17 +52,25 @@ class ToolCallResult(BaseModel):
     result: Any = Field(description="Tool result")
     error: str | None = Field(default=None, description="Error if tool failed")
     duration_ms: float = Field(description="Execution time in milliseconds")
-    is_remote: bool = Field(default=False, description="Whether tool is remote (MCP)")
+    is_remote: bool = Field(
+        default=False, description="Whether tool is remote (MCP)"
+    )
 
 
 class ConversationMessage(BaseModel):
     """A message in the conversation."""
 
-    role: str = Field(description="Message role (user, assistant, system, tool)")
+    role: str = Field(
+        description="Message role (user, assistant, system, tool)"
+    )
     content: str = Field(description="Message content")
     timestamp: datetime = Field(default_factory=datetime.now)
-    tool_call_id: str | None = Field(default=None, description="Tool call ID if applicable")
-    tool_name: str | None = Field(default=None, description="Tool name if applicable")
+    tool_call_id: str | None = Field(
+        default=None, description="Tool call ID if applicable"
+    )
+    tool_name: str | None = Field(
+        default=None, description="Tool name if applicable"
+    )
 
 
 class ConversationHistory(BaseModel):

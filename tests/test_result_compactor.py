@@ -13,7 +13,6 @@ from app.agents.result_compactor import (
     ResultCompactor,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -54,7 +53,9 @@ class TestCompactReceipt:
         assert "5.0 KB" in r.format()
 
     def test_human_size_megabytes(self):
-        r = CompactReceipt(entry_id="x", size_bytes=2 * 1024 * 1024, preview="", gap="")
+        r = CompactReceipt(
+            entry_id="x", size_bytes=2 * 1024 * 1024, preview="", gap=""
+        )
         assert "2.0 MB" in r.format()
 
 
@@ -68,7 +69,10 @@ class TestShouldCompact:
         assert compactor.should_compact("search", "short") is False
 
     def test_large_result_compacted(self, compactor):
-        assert compactor.should_compact("search", "x" * (MIN_COMPACT_SIZE + 1)) is True
+        assert (
+            compactor.should_compact("search", "x" * (MIN_COMPACT_SIZE + 1))
+            is True
+        )
 
     def test_passthrough_tools_never_compacted(self, compactor):
         big = "x" * (MIN_COMPACT_SIZE + 100)
@@ -76,10 +80,15 @@ class TestShouldCompact:
             assert compactor.should_compact(tool_name, big) is False
 
     def test_boundary_not_compacted(self, compactor):
-        assert compactor.should_compact("tool", "x" * MIN_COMPACT_SIZE) is False
+        assert (
+            compactor.should_compact("tool", "x" * MIN_COMPACT_SIZE) is False
+        )
 
     def test_boundary_plus_one_compacted(self, compactor):
-        assert compactor.should_compact("tool", "x" * (MIN_COMPACT_SIZE + 1)) is True
+        assert (
+            compactor.should_compact("tool", "x" * (MIN_COMPACT_SIZE + 1))
+            is True
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -158,13 +167,18 @@ class TestTextGapAnalysis:
         # Lines 4+ introduce Berlin and Tokyo which should appear in the gap.
         preview_lines = "The weather in London is sunny today.\n" * 4
         hidden_lines = (
-            "Additional data about Berlin and Tokyo shows different patterns.\n"
+            "Additional data about Berlin and Tokyo"
+            " shows different patterns.\n"
             * 20
         )
         text = preview_lines + hidden_lines
         receipt = compactor.compact("t/001", text)
         gap_lower = receipt.gap.lower()
-        assert "berlin" in gap_lower or "tokyo" in gap_lower or "topics" in gap_lower
+        assert (
+            "berlin" in gap_lower
+            or "tokyo" in gap_lower
+            or "topics" in gap_lower
+        )
 
     def test_percentage_shown(self, compactor):
         text = "x" * 1000

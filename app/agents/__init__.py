@@ -1,6 +1,10 @@
 """Agents module for chatbot orchestration."""
 
-from app.agents.agent import ExecutionMode, HybridChatbotAgent, create_chatbot_agent
+from app.agents.agent import (
+    ExecutionMode,
+    HybridChatbotAgent,
+    create_chatbot_agent,
+)
 from app.agents.nodes import (
     ReflectionNode,
     RoutingNode,
@@ -22,13 +26,14 @@ from app.agents.state import (
     ConversationMessage,
     ToolCallResult,
 )
-from app.agents.tools import MCPManager, ToolWrapper, create_mcp_manager, with_hooks
-
-# Alias for backwards compatibility
-ChatbotAgent = HybridChatbotAgent
+from app.agents.tools import (
+    MCPManager,
+    ToolWrapper,
+    create_mcp_manager,
+    with_hooks,
+)
 
 __all__ = [
-    "ChatbotAgent",
     "CleanupPolicy",
     "ExecutionMode",
     "HybridChatbotAgent",

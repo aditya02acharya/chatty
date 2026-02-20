@@ -16,7 +16,6 @@ from app.agents.agent import ExecutionMode, SmartAgentHook, _extract_text
 from app.agents.result_compactor import MIN_COMPACT_SIZE, PASSTHROUGH_TOOLS
 from app.agents.session_fs import SessionStore
 
-
 # ---------------------------------------------------------------------------
 # Helpers: lightweight stand-ins for Strands types
 # ---------------------------------------------------------------------------
@@ -85,7 +84,11 @@ class TestExtractText:
         assert _extract_text(tr) == "some output"
 
     def test_tool_result_json_block(self):
-        tr = {"content": [{"json": {"key": "val"}}], "status": "success", "toolUseId": "x"}
+        tr = {
+            "content": [{"json": {"key": "val"}}],
+            "status": "success",
+            "toolUseId": "x",
+        }
         assert '"key"' in _extract_text(tr)
 
     def test_tool_result_multiple_blocks(self):
@@ -164,7 +167,11 @@ class TestHookPassthrough:
         hook = _make_hook(streamer, store=store)
         original_result = _make_tool_result("original data")
         event = FakeAfterToolCallEvent(
-            tool_use={"name": "session_grep", "input": {}, "toolUseId": "tu-1"},
+            tool_use={
+                "name": "session_grep",
+                "input": {},
+                "toolUseId": "tu-1",
+            },
             result=original_result,
         )
         await hook._on_after_tool_call(event)
@@ -181,7 +188,11 @@ class TestHookFastMode:
     async def test_fast_mode_does_not_store(self, streamer, store):
         hook = _make_hook(streamer, mode=ExecutionMode.FAST, store=store)
         event = FakeAfterToolCallEvent(
-            tool_use={"name": "search", "input": {"q": "test"}, "toolUseId": "tu-1"},
+            tool_use={
+                "name": "search",
+                "input": {"q": "test"},
+                "toolUseId": "tu-1",
+            },
             result=_make_tool_result("x" * 1000),
         )
         await hook._on_after_tool_call(event)
@@ -199,7 +210,11 @@ class TestHookCompaction:
         hook = _make_hook(streamer, store=store)
         big_text = "x" * (MIN_COMPACT_SIZE + 100)
         event = FakeAfterToolCallEvent(
-            tool_use={"name": "web_search", "input": {"q": "test"}, "toolUseId": "tu-99"},
+            tool_use={
+                "name": "web_search",
+                "input": {"q": "test"},
+                "toolUseId": "tu-99",
+            },
             result=_make_tool_result(big_text, tool_use_id="tu-99"),
         )
 
@@ -221,7 +236,9 @@ class TestHookCompaction:
         assert event.result["toolUseId"] == "tu-99"
 
     @pytest.mark.asyncio
-    async def test_small_result_stored_but_not_compacted(self, streamer, store):
+    async def test_small_result_stored_but_not_compacted(
+        self, streamer, store
+    ):
         hook = _make_hook(streamer, store=store)
         small_text = "small result"
         original_result = _make_tool_result(small_text)
@@ -291,19 +308,31 @@ class TestEndToEndRetrieval:
         """After compaction, the full data is on disk and searchable."""
         hook = _make_hook(streamer, store=store)
 
-        weather_data = json.dumps({
-            "city": "London",
-            "temperature": 20,
-            "conditions": "partly cloudy",
-            "humidity": 65,
-            "wind_speed": 12,
-            "forecast": [{"day": "Mon", "high": 22}, {"day": "Tue", "high": 19}],
-        }, indent=2)
+        weather_data = json.dumps(
+            {
+                "city": "London",
+                "temperature": 20,
+                "conditions": "partly cloudy",
+                "humidity": 65,
+                "wind_speed": 12,
+                "forecast": [
+                    {"day": "Mon", "high": 22},
+                    {"day": "Tue", "high": 19},
+                ],
+            },
+            indent=2,
+        )
         # Pad to exceed compaction threshold
-        weather_data += "\n" + " " * max(0, MIN_COMPACT_SIZE - len(weather_data) + 100)
+        weather_data += "\n" + " " * max(
+            0, MIN_COMPACT_SIZE - len(weather_data) + 100
+        )
 
         event = FakeAfterToolCallEvent(
-            tool_use={"name": "get_weather", "input": {"city": "London"}, "toolUseId": "tu-1"},
+            tool_use={
+                "name": "get_weather",
+                "input": {"city": "London"},
+                "toolUseId": "tu-1",
+            },
             result=_make_tool_result(weather_data),
         )
         await hook._on_after_tool_call(event)

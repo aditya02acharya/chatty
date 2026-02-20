@@ -25,6 +25,7 @@ Execution:
 import asyncio
 import json
 import logging
+import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -49,10 +50,10 @@ from app.agents.session_fs import (
     SessionLifecycle,
     SessionStore,
 )
-from app.agents.tools import MCPManager, create_mcp_manager
+from app.agents.tools import create_mcp_manager
 from app.core.config import settings
 from app.core.exceptions import AgentError
-from app.streaming import AGUIStreamer
+from app.streaming import AGUIStreamer, create_streamer
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,7 @@ class ToolCall:
 # Mode analyser
 # ---------------------------------------------------------------------------
 
+
 class ModeAnalyzer(BaseModel):
     """Analyzes query to determine appropriate mode."""
 
@@ -87,7 +89,9 @@ class ModeAnalyzer(BaseModel):
 
     model_config = {"arbitrary_types_allowed": True}
 
-    async def analyze_query(self, query: str) -> tuple[ExecutionMode, dict[str, Any]]:
+    async def analyze_query(
+        self, query: str
+    ) -> tuple[ExecutionMode, dict[str, Any]]:
         """Analyze query to determine mode and strategy."""
         prompt = f"""Analyze this query and determine the best mode:
 
@@ -110,26 +114,47 @@ Return JSON:
         try:
             response = await self.model.structured_output_async(
                 messages=[{"role": "user", "content": [{"text": prompt}]}],
-                system_prompt="You analyze queries to determine processing strategy.",
+                system_prompt=(
+                    "You analyze queries to"
+                    " determine processing strategy."
+                ),
             )
             result = response.content
 
             mode_str = result.get("mode", "fast").lower()
-            mode = ExecutionMode.AGENTIC if mode_str == "agentic" else ExecutionMode.FAST
+            mode = (
+                ExecutionMode.AGENTIC
+                if mode_str == "agentic"
+                else ExecutionMode.FAST
+            )
 
             return mode, result
         except Exception:
             # Fallback: simple heuristic
             query_lower = query.lower()
-            keywords = ["research", "investigate", "analyze", "compare", "detailed", "comprehensive"]
+            keywords = [
+                "research",
+                "investigate",
+                "analyze",
+                "compare",
+                "detailed",
+                "comprehensive",
+            ]
             if any(kw in query_lower for kw in keywords):
-                return ExecutionMode.AGENTIC, {"reasoning": "keyword_match", "complexity": "high"}
-            return ExecutionMode.FAST, {"reasoning": "default", "complexity": "low"}
+                return ExecutionMode.AGENTIC, {
+                    "reasoning": "keyword_match",
+                    "complexity": "high",
+                }
+            return ExecutionMode.FAST, {
+                "reasoning": "default",
+                "complexity": "low",
+            }
 
 
 # ---------------------------------------------------------------------------
 # Tool-call planner
 # ---------------------------------------------------------------------------
+
 
 class ToolCallPlanner(BaseModel):
     """Plans tool execution with dependency analysis."""
@@ -149,11 +174,13 @@ class ToolCallPlanner(BaseModel):
             return await self._plan_fast(query, available_tools)
         return await self._plan_agentic(query, available_tools)
 
-    async def _plan_fast(self, query: str, available_tools: list[str]) -> list[ToolCall]:
+    async def _plan_fast(
+        self, query: str, available_tools: list[str]
+    ) -> list[ToolCall]:
         prompt = f"""Does this query require multiple tools?
 
 Query: "{query}"
-Available tools: {', '.join(available_tools[:10])}
+Available tools: {", ".join(available_tools[:10])}
 
 Return JSON:
 {{
@@ -161,7 +188,9 @@ Return JSON:
     "reasoning": "..."
 }}
 
-If only 1 tool or no tools needed, return that. If multiple explicitly requested (e.g. "compare X and Y"), return all.
+If only 1 tool or no tools needed, return that.
+If multiple explicitly requested
+(e.g. "compare X and Y"), return all.
 """
 
         try:
@@ -178,7 +207,9 @@ If only 1 tool or no tools needed, return that. If multiple explicitly requested
         except Exception:
             return []
 
-    async def _plan_agentic(self, query: str, available_tools: list[str]) -> list[ToolCall]:
+    async def _plan_agentic(
+        self, query: str, available_tools: list[str]
+    ) -> list[ToolCall]:
         tools_str = "\n".join(f"- {t}" for t in available_tools)
 
         prompt = f"""Plan the execution for this query:
@@ -191,7 +222,8 @@ Available tools:
 Create a plan. Return JSON:
 {{
     "steps": [
-        {{"tool": "tool_name", "args": {{...}}, "depends_on": [], "reasoning": "..."}},
+        {{"tool": "tool_name", "args": {{...}},
+          "depends_on": [], "reasoning": "..."}},
         ...
     ]
 }}
@@ -205,7 +237,10 @@ Rules:
         try:
             response = await self.model.structured_output_async(
                 messages=[{"role": "user", "content": [{"text": prompt}]}],
-                system_prompt="You are a planning assistant. Create detailed plans.",
+                system_prompt=(
+                    "You are a planning assistant."
+                    " Create detailed plans."
+                ),
             )
             result = response.content
             steps = result.get("steps", [])
@@ -222,7 +257,9 @@ Rules:
         except Exception:
             return []
 
-    def group_for_execution(self, calls: list[ToolCall]) -> list[list[ToolCall]]:
+    def group_for_execution(
+        self, calls: list[ToolCall]
+    ) -> list[list[ToolCall]]:
         """Group tool calls into waves for optimal execution.
 
         Each wave contains calls whose dependencies are already satisfied.
@@ -234,12 +271,14 @@ Rules:
 
         while remaining:
             ready = [
-                c for c in remaining
+                c
+                for c in remaining
                 if all(dep in completed for dep in c.dependencies)
             ]
 
             if not ready:
-                # Circular dependency or unresolvable — run remaining sequentially
+                # Circular dependency or unresolvable
+                # — run remaining sequentially
                 for c in remaining:
                     groups.append([c])
                 break
@@ -254,6 +293,7 @@ Rules:
 # ---------------------------------------------------------------------------
 # Observer: SmartAgentHook
 # ---------------------------------------------------------------------------
+
 
 class SmartAgentHook(HookProvider):
     """Intercepts tool results, stores full payloads to the session filesystem,
@@ -296,7 +336,9 @@ class SmartAgentHook(HookProvider):
         if isinstance(self._streamer, AGUIStreamer):
             await self._streamer.tool_call_end(tool_name)
             if error:
-                await self._streamer.tool_result(tool_name, "", error=str(error))
+                await self._streamer.tool_result(
+                    tool_name, "", error=str(error)
+                )
             else:
                 text = _extract_text(result)
                 await self._streamer.tool_result(tool_name, text[:1000])
@@ -360,11 +402,14 @@ def _extract_text(result: Any) -> str:
 # Hybrid agent
 # ---------------------------------------------------------------------------
 
+
 def _cleanup_policy_for_mode(mode: ExecutionMode) -> CleanupPolicy:
     """Map execution mode to the appropriate cleanup policy (Strategy)."""
     if mode == ExecutionMode.FAST:
         return CleanupPolicy.ALWAYS
-    return CleanupPolicy.ALWAYS  # agentic/auto: still cleanup after each request
+    return (
+        CleanupPolicy.ALWAYS
+    )  # agentic/auto: still cleanup after each request
 
 
 class HybridChatbotAgent(BaseModel):
@@ -378,12 +423,16 @@ class HybridChatbotAgent(BaseModel):
     - Complete, curated responses only
     """
 
-    model_id: str = Field(default_factory=lambda: settings.bedrock.default_model)
+    model_id: str = Field(
+        default_factory=lambda: settings.bedrock.default_model
+    )
     mode: ExecutionMode = Field(default=ExecutionMode.AUTO)
     session_id: str | None = Field(default=None)
     enable_mcp: bool = Field(default=True)
 
-    max_parallel_tools: int = Field(default=5, description="Max parallel tools")
+    max_parallel_tools: int = Field(
+        default=5, description="Max parallel tools"
+    )
     filesystem_enabled: bool = Field(default=True)
 
     model_config = {"populate_by_name": True}
@@ -413,11 +462,12 @@ class HybridChatbotAgent(BaseModel):
         @tool
         async def get_current_time() -> str:
             """Get the current time."""
-            import time
             return time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
 
         @tool
-        async def session_grep(pattern: str, case_sensitive: bool = False) -> str:
+        async def session_grep(
+            pattern: str, case_sensitive: bool = False
+        ) -> str:
             """Search session filesystem for pattern.
 
             Args:
@@ -449,7 +499,9 @@ class HybridChatbotAgent(BaseModel):
             per_tool_lines = []
             for name, info in s.get("per_tool", {}).items():
                 per_tool_lines.append(
-                    f"  - {name}: {info['count']} results, {info['total_bytes']} bytes"
+                    f"  - {name}: "
+                    f"{info['count']} results, "
+                    f"{info['total_bytes']} bytes"
                 )
 
             return (
@@ -512,8 +564,6 @@ class HybridChatbotAgent(BaseModel):
         if request_id is None:
             request_id = str(uuid.uuid4())
 
-        from app.streaming import create_streamer
-
         async with create_streamer(request_id) as streamer:
             await streamer.run_started()
 
@@ -524,21 +574,25 @@ class HybridChatbotAgent(BaseModel):
                 self._actual_mode = self.mode
 
             await streamer.thinking_start(
-                f"Mode: {self._actual_mode.value} - {analysis.get('reasoning', '')}"
+                f"Mode: {self._actual_mode.value}"
+                f" - {analysis.get('reasoning', '')}"
             )
 
             # Determine cleanup policy for this run
             policy = _cleanup_policy_for_mode(self._actual_mode)
             needs_fs = (
-                self._actual_mode in (ExecutionMode.AGENTIC, ExecutionMode.AUTO)
+                self._actual_mode
+                in (ExecutionMode.AGENTIC, ExecutionMode.AUTO)
                 and self.filesystem_enabled
                 and self.session_id is not None
             )
 
             # Step 2: Enter lifecycle (creates + guarantees cleanup)
-            lifecycle = SessionLifecycle(
-                self.session_id or request_id, policy
-            ) if needs_fs else None
+            lifecycle = (
+                SessionLifecycle(self.session_id or request_id, policy)
+                if needs_fs
+                else None
+            )
 
             try:
                 store: SessionStore | None = None
@@ -566,7 +620,8 @@ class HybridChatbotAgent(BaseModel):
                 )
                 executor = (
                     None
-                    if self._actual_mode == ExecutionMode.FAST or not planned_calls
+                    if self._actual_mode == ExecutionMode.FAST
+                    or not planned_calls
                     else SequentialToolExecutor()
                 )
 
@@ -595,7 +650,9 @@ class HybridChatbotAgent(BaseModel):
 
             except asyncio.CancelledError:
                 # Client disconnected – ensure cleanup runs
-                logger.info("Request %s cancelled (client disconnect)", request_id)
+                logger.info(
+                    "Request %s cancelled (client disconnect)", request_id
+                )
                 if lifecycle:
                     lifecycle.mark_error()
                 raise

@@ -54,12 +54,15 @@ class AGUIStreamer:
         """Initialize the streamer.
 
         Args:
-            request_id: Unique request identifier (maps to ag-ui thread_id/run_id)
+            request_id: Unique request identifier
+                (maps to ag-ui thread_id/run_id)
             buffer_size: Maximum buffer size for events
         """
         self.request_id = request_id
         self.buffer_size = buffer_size
-        self._queue: asyncio.Queue[BaseEvent | None] = asyncio.Queue(maxsize=buffer_size)
+        self._queue: asyncio.Queue[BaseEvent | None] = asyncio.Queue(
+            maxsize=buffer_size
+        )
         self._closed = False
         self._start_time = time.time()
         self._encoder = EventEncoder()
@@ -81,7 +84,9 @@ class AGUIStreamer:
         try:
             await asyncio.wait_for(self._queue.put(event), timeout=5.0)
         except asyncio.TimeoutError:
-            raise StreamDisconnectedError("Stream buffer full, client may be disconnected")
+            raise StreamDisconnectedError(
+                "Stream buffer full, client may be disconnected"
+            )
 
     async def run_started(self) -> None:
         """Emit a run started event."""
@@ -114,9 +119,15 @@ class AGUIStreamer:
         """Emit a tool call end event."""
         await self.emit(ToolCallEndEvent(tool_name=tool_name))
 
-    async def tool_result(self, tool_name: str, result: str, error: str | None = None) -> None:
+    async def tool_result(
+        self, tool_name: str, result: str, error: str | None = None
+    ) -> None:
         """Emit a tool result event."""
-        await self.emit(ToolCallResultEvent(tool_name=tool_name, result=result, error=error))
+        await self.emit(
+            ToolCallResultEvent(
+                tool_name=tool_name, result=result, error=error
+            )
+        )
 
     async def content_start(self) -> None:
         """Emit a text message start event."""
@@ -132,7 +143,9 @@ class AGUIStreamer:
 
     async def error(self, error_code: str, error_message: str) -> None:
         """Emit a run error event."""
-        await self.emit(RunErrorEvent(error_message=f"{error_code}: {error_message}"))
+        await self.emit(
+            RunErrorEvent(error_message=f"{error_code}: {error_message}")
+        )
 
     async def done(self, final_response: str | None = None) -> None:
         """Emit a done event and close the stream.
@@ -216,8 +229,6 @@ class AGUIStreamer:
 
     async def _heartbeat_generator(self) -> None:
         """Push heartbeat sentinels to the queue when idle."""
-        from app.core.config import settings
-
         interval = settings.agui.heartbeat_interval
 
         while not self._closed:

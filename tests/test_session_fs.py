@@ -1,5 +1,6 @@
 """
-Tests for session filesystem: SessionStore, SessionLifecycle, and CleanupPolicy.
+Tests for session filesystem: SessionStore,
+SessionLifecycle, and CleanupPolicy.
 """
 
 import json
@@ -68,7 +69,9 @@ class TestSessionStoreStructure:
 class TestSessionStoreReadWrite:
     @pytest.mark.asyncio
     async def test_store_creates_tool_subdirectory(self, store, tmp_sessions):
-        await store.store_tool_result("get_weather", {"city": "London"}, {"temp": 20})
+        await store.store_tool_result(
+            "get_weather", {"city": "London"}, {"temp": 20}
+        )
 
         tool_dir = tmp_sessions / "test-session-001" / "tools" / "get_weather"
         assert tool_dir.is_dir()
@@ -77,7 +80,9 @@ class TestSessionStoreReadWrite:
 
     @pytest.mark.asyncio
     async def test_stored_file_contains_provenance(self, store, tmp_sessions):
-        await store.store_tool_result("search", {"q": "python"}, "some results")
+        await store.store_tool_result(
+            "search", {"q": "python"}, "some results"
+        )
 
         tool_dir = tmp_sessions / "test-session-001" / "tools" / "search"
         files = list(tool_dir.glob("*.json"))
@@ -153,7 +158,11 @@ class TestSessionStoreIndex:
         await store.store_tool_result("third", {}, "3")
 
         all_entries = store.get_all()
-        assert [e.tool_name for e in all_entries] == ["first", "second", "third"]
+        assert [e.tool_name for e in all_entries] == [
+            "first",
+            "second",
+            "third",
+        ]
 
     @pytest.mark.asyncio
     async def test_index_persisted_and_reloaded(self, tmp_sessions):
@@ -178,7 +187,9 @@ class TestSessionStoreIndex:
 class TestSessionStoreGrep:
     @pytest.mark.asyncio
     async def test_grep_finds_in_preview(self, store):
-        await store.store_tool_result("search", {}, "The weather in London is sunny")
+        await store.store_tool_result(
+            "search", {}, "The weather in London is sunny"
+        )
 
         matches = await store.grep("London")
         assert len(matches) == 1
@@ -302,7 +313,9 @@ class TestSessionLifecycle:
         assert not (tmp_sessions / "lc-2").exists()
 
     @pytest.mark.asyncio
-    async def test_lifecycle_on_error_keeps_files_on_success(self, tmp_sessions):
+    async def test_lifecycle_on_error_keeps_files_on_success(
+        self, tmp_sessions
+    ):
         async with SessionLifecycle(
             "lc-3", CleanupPolicy.ON_ERROR, base_path=tmp_sessions
         ) as store:
