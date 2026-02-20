@@ -5,6 +5,8 @@ The agent orchestrates mode analysis, tool planning, session filesystem
 lifecycle, and Strands SDK integration into a single streaming entry point.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import time
@@ -30,7 +32,11 @@ from app.agents.session_fs import (
     SessionLifecycle,
     SessionStore,
 )
-from app.agents.tools import create_mcp_manager
+from app.agents.tools import (
+    ToolDiscoveryClient,
+    create_mcp_manager,
+)
+from app.agents.tools.mcp_manager import MCPManager
 from app.core.config import settings
 from app.core.exceptions import AgentError
 from app.streaming import create_streamer
@@ -168,19 +174,24 @@ class HybridChatbotAgent(BaseModel):
             read_session_file,
         ]
 
-    async def _load_tools(self) -> list[str]:
-        """Get list of available tool names."""
-        tools = [
-            t.name if hasattr(t, "name") else t.__name__
-            for t in self._create_local_tools(None)
-        ]
+    async def _discover_tools(
+        self, message: str, mcp: MCPManager | None
+    ) -> list[str] | None:
+        """Use the discovery MCP tool to find relevant tools for a query.
 
-        if self.enable_mcp:
-            async with create_mcp_manager() as mcp:
-                all_tools = await mcp.discover_all()
-                tools.extend(all_tools["tools"].keys())
+        Returns:
+            List of tool names if discovery is enabled and succeeds,
+            or None to indicate "load all tools" (discovery disabled/failed).
+        """
+        if not settings.agent.tool_discovery.enabled or mcp is None:
+            return None
 
-        return tools
+        discovery = ToolDiscoveryClient(mcp)
+        matches = await discovery.discover(message)
+        if not matches:
+            return None
+
+        return [m.name for m in matches]
 
     # -- streaming entry point -----------------------------------------------
 
@@ -234,19 +245,34 @@ class HybridChatbotAgent(BaseModel):
                 if lifecycle:
                     store = await lifecycle.__aenter__()
 
-                # Step 3: Plan tool calls
-                available_tools = await self._load_tools()
-                planner = self._create_planner()
-                planned_calls = await planner.plan_execution(
-                    message, available_tools, self._actual_mode
-                )
-
-                # Step 4: Build the Strands agent
+                # Step 3: Discover relevant tools and plan
                 tools = self._create_local_tools(store)
+                mcp_tool_names: list[str] | None = None
+
                 if self.enable_mcp:
                     async with create_mcp_manager() as mcp:
-                        mcp_tools = await mcp.load_strands_tools()
+                        # Ask the discovery service which MCP tools
+                        # are relevant for this query
+                        mcp_tool_names = await self._discover_tools(
+                            message, mcp
+                        )
+
+                        # Load only the discovered subset (or all
+                        # if discovery is disabled / returned nothing)
+                        mcp_tools = await mcp.load_strands_tools(
+                            tool_names=mcp_tool_names
+                        )
                         tools.extend(mcp_tools)
+
+                available_names = [
+                    t.name if hasattr(t, "name") else t.__name__
+                    for t in tools
+                ]
+
+                planner = self._create_planner()
+                planned_calls = await planner.plan_execution(
+                    message, available_names, self._actual_mode
+                )
 
                 conv_manager = (
                     NullConversationManager()

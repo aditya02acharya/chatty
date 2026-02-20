@@ -207,6 +207,36 @@ class MCPSettings(YamlSettings):
     )
 
 
+class ToolDiscoverySettings(BaseSettings):
+    """Configuration for MCP-based tool discovery."""
+
+    enabled: bool = Field(
+        default=False,
+        description="Enable dynamic tool discovery via MCP tool",
+    )
+    tool_name: str = Field(
+        default="find_tools",
+        description="Name of the MCP tool that performs discovery",
+    )
+    server_name: str | None = Field(
+        default=None,
+        description="MCP server hosting the discovery tool (auto-detect if None)",
+    )
+    top_k: int = Field(
+        default=10,
+        description="Maximum number of tools to return",
+        ge=1,
+        le=50,
+    )
+
+    model_config = SettingsConfigDict(
+        env_prefix="TOOL_DISCOVERY_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+
 class AgentSettings(YamlSettings):
     """Agent behavior configuration settings."""
 
@@ -235,6 +265,10 @@ class AgentSettings(YamlSettings):
             "Always explain your reasoning when using tools."
         ),
         description="System prompt for the agent",
+    )
+    tool_discovery: ToolDiscoverySettings = Field(
+        default_factory=ToolDiscoverySettings,
+        description="Tool discovery configuration",
     )
 
     model_config = SettingsConfigDict(

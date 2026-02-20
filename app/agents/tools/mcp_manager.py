@@ -560,8 +560,14 @@ class MCPManager:
 
     # ===== Strands Integration =====
 
-    async def load_strands_tools(self) -> list:
+    async def load_strands_tools(
+        self, tool_names: list[str] | None = None
+    ) -> list:
         """Load MCP tools as strands ToolProvider objects.
+
+        Args:
+            tool_names: Optional whitelist of tool names to load.
+                        If None, loads all tools from all servers.
 
         Returns:
             List of strands tool providers
@@ -571,8 +577,22 @@ class MCPManager:
         for conn in self._connections.values():
             await conn.start()
 
-            # Load tools from the MCP client
             mcp_tools = await asyncio.to_thread(conn._client.load_tools)
+
+            if tool_names is not None:
+                allowed = set(tool_names)
+                mcp_tools = [
+                    t
+                    for t in mcp_tools
+                    if (
+                        (hasattr(t, "tool_name") and t.tool_name in allowed)
+                        or (hasattr(t, "name") and t.name in allowed)
+                        or (
+                            hasattr(t, "__name__") and t.__name__ in allowed
+                        )
+                    )
+                ]
+
             tools.extend(mcp_tools)
 
         return tools

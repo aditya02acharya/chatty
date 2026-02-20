@@ -7,8 +7,10 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from pydantic import Field
+
 from app.agents import create_chatbot_agent
-from app.agents.tools import create_mcp_manager
+from app.agents.tools import ToolDiscoveryClient, create_mcp_manager
 
 router = APIRouter(prefix="/tools", tags=["tools"])
 
@@ -67,6 +69,46 @@ async def list_tools() -> list[ToolInfo]:
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Failed to list tools: {e}"
+        )
+
+
+class DiscoverRequest(BaseModel):
+    """Request model for tool discovery."""
+
+    query: str = Field(description="Description of what tools are needed")
+    top_k: int = Field(default=10, description="Max tools to return", ge=1, le=50)
+
+
+class DiscoveredToolInfo(BaseModel):
+    """A tool returned by the discovery service."""
+
+    name: str
+    description: str = ""
+    score: float = 0.0
+
+
+@router.post("/discover", response_model=list[DiscoveredToolInfo])
+async def discover_tools(request: DiscoverRequest) -> list[DiscoveredToolInfo]:
+    """Discover the best-matching tools for a given query.
+
+    Calls the external MCP-based tool discovery service and returns
+    the top-K most relevant tools ranked by score.
+    """
+    try:
+        async with create_mcp_manager() as mcp:
+            discovery = ToolDiscoveryClient(mcp)
+            matches = await discovery.discover(request.query)
+            return [
+                DiscoveredToolInfo(
+                    name=m.name,
+                    description=m.description,
+                    score=m.score,
+                )
+                for m in matches[: request.top_k]
+            ]
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Tool discovery failed: {e}"
         )
 
 
