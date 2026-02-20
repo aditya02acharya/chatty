@@ -11,7 +11,6 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
-from enum import Enum
 
 from ag_ui.core.events import RunErrorEvent
 from ag_ui.encoder.encoder import EventEncoder
@@ -31,7 +30,7 @@ def _agent_kwargs(request: "ChatRequest", **overrides) -> dict:
     """Build kwargs for create_chatbot_agent, omitting None values so that
     Pydantic default_factory fields activate correctly."""
     kwargs: dict = {
-        "mode": ExecutionMode(request.mode.value),
+        "mode": ExecutionMode(request.mode),
         "enable_mcp": True,
         **overrides,
     }
@@ -42,20 +41,12 @@ def _agent_kwargs(request: "ChatRequest", **overrides) -> dict:
     return kwargs
 
 
-class ChatMode(str, Enum):
-    """Chat execution mode."""
-
-    FAST = "fast"
-    AGENTIC = "agentic"
-    AUTO = "auto"
-
-
 class ChatRequest(BaseModel):
     """Request model for chat endpoint."""
 
     message: str = Field(description="User message", min_length=1)
-    mode: ChatMode = Field(
-        default=ChatMode.AUTO,
+    mode: ExecutionMode = Field(
+        default=ExecutionMode.AUTO,
         description="Execution mode: fast, agentic, or auto",
     )
     model_id: str | None = Field(
