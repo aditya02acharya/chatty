@@ -27,6 +27,21 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
+def _agent_kwargs(request: "ChatRequest", **overrides) -> dict:
+    """Build kwargs for create_chatbot_agent, omitting None values so that
+    Pydantic default_factory fields activate correctly."""
+    kwargs: dict = {
+        "mode": ExecutionMode(request.mode.value),
+        "enable_mcp": True,
+        **overrides,
+    }
+    if request.model_id is not None:
+        kwargs["model_id"] = request.model_id
+    if request.session_id is not None:
+        kwargs["session_id"] = request.session_id
+    return kwargs
+
+
 class ChatMode(str, Enum):
     """Chat execution mode."""
 
@@ -69,13 +84,9 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
 
     async def generate() -> AsyncIterator[str]:
         """Generate SSE chunks for the chat response."""
+        encoder = EventEncoder()
         try:
-            async with create_chatbot_agent(
-                mode=ExecutionMode(request.mode.value),
-                model_id=request.model_id,
-                session_id=request.session_id,
-                enable_mcp=True,
-            ) as agent:
+            async with create_chatbot_agent(**_agent_kwargs(request)) as agent:
                 async for chunk in agent.chat_stream(request.message, request_id):
                     yield chunk
 
@@ -86,13 +97,15 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
             return
 
         except AgentError as e:
-            error_event = RunErrorEvent(error_message=str(e))
-            encoder = EventEncoder()
-            yield encoder.encode(error_event)
+            yield encoder.encode(RunErrorEvent(error_message=str(e)))
 
         except Exception as e:
+            # Cannot raise HTTPException inside a streaming generator
+            # (headers already sent). Emit an SSE error event instead.
             logger.exception("Unexpected error in stream %s", request_id)
-            raise HTTPException(status_code=500, detail=f"Internal error: {e}")
+            yield encoder.encode(
+                RunErrorEvent(error_message=f"Internal error: {e}")
+            )
 
     return StreamingResponse(
         generate(),
@@ -116,12 +129,9 @@ async def chat_complete(request: ChatRequest) -> ChatResponse:
     start_time = time.time()
 
     try:
-        async with create_chatbot_agent(
-            mode=ExecutionMode(request.mode.value),
-            model_id=request.model_id,
-            session_id=request.session_id or request_id,
-            enable_mcp=True,
-        ) as agent:
+        kwargs = _agent_kwargs(request)
+        kwargs.setdefault("session_id", request_id)
+        async with create_chatbot_agent(**kwargs) as agent:
             response = await agent.chat_complete(request.message, request_id)
 
         duration_ms = (time.time() - start_time) * 1000
