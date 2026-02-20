@@ -9,6 +9,13 @@ from app.agents.nodes import (
     ToolNodeConfig,
     ValidationNode,
 )
+from app.agents.session_fs import (
+    CleanupPolicy,
+    IndexEntry,
+    SessionLifecycle,
+    SessionStore,
+    create_session_store,
+)
 from app.agents.state import (
     AgentState,
     ConversationHistory,
@@ -22,9 +29,14 @@ ChatbotAgent = HybridChatbotAgent
 
 __all__ = [
     "ChatbotAgent",
+    "CleanupPolicy",
     "ExecutionMode",
     "HybridChatbotAgent",
+    "IndexEntry",
+    "SessionLifecycle",
+    "SessionStore",
     "create_chatbot_agent",
+    "create_session_store",
     "ReflectionNode",
     "RoutingNode",
     "SynthesisNode",

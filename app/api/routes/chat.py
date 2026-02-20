@@ -2,8 +2,12 @@
 Chat endpoints for the chatbot API.
 
 Provides streaming and non-streaming chat responses via SSE.
+Handles client disconnects gracefully – the agent's session lifecycle
+ensures filesystem cleanup regardless of how the request ends.
 """
 
+import asyncio
+import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -17,6 +21,8 @@ from pydantic import BaseModel, Field
 
 from app.agents import ExecutionMode, create_chatbot_agent
 from app.core.exceptions import AgentError
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -56,12 +62,8 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
     """Streaming chat endpoint using Server-Sent Events (SSE).
 
     Returns ag-ui protocol events as SSE chunks for real-time updates.
-
-    Args:
-        request: Chat request with message and optional configuration
-
-    Returns:
-        StreamingResponse with SSE content type
+    The underlying agent manages its own session lifecycle – cleanup
+    runs on success, error, *and* client disconnect (CancelledError).
     """
     request_id = str(uuid.uuid4())
 
@@ -76,11 +78,20 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
             ) as agent:
                 async for chunk in agent.chat_stream(request.message, request_id):
                     yield chunk
+
+        except asyncio.CancelledError:
+            # Starlette cancels the generator when the client disconnects.
+            # The agent's finally block has already cleaned up the session.
+            logger.info("Stream %s cancelled (client disconnect)", request_id)
+            return
+
         except AgentError as e:
             error_event = RunErrorEvent(error_message=str(e))
             encoder = EventEncoder()
             yield encoder.encode(error_event)
+
         except Exception as e:
+            logger.exception("Unexpected error in stream %s", request_id)
             raise HTTPException(status_code=500, detail=f"Internal error: {e}")
 
     return StreamingResponse(
@@ -99,12 +110,7 @@ async def chat_complete(request: ChatRequest) -> ChatResponse:
     """Non-streaming chat endpoint.
 
     Returns the complete response after all processing is done.
-
-    Args:
-        request: Chat request with message and optional configuration
-
-    Returns:
-        ChatResponse with complete response and metadata
+    Session cleanup is handled by the agent lifecycle.
     """
     request_id = str(uuid.uuid4())
     start_time = time.time()
@@ -113,7 +119,7 @@ async def chat_complete(request: ChatRequest) -> ChatResponse:
         async with create_chatbot_agent(
             mode=ExecutionMode(request.mode.value),
             model_id=request.model_id,
-            session_id=request.session_id or request_id,  # Use request_id as session if not provided
+            session_id=request.session_id or request_id,
             enable_mcp=True,
         ) as agent:
             response = await agent.chat_complete(request.message, request_id)
@@ -126,11 +132,12 @@ async def chat_complete(request: ChatRequest) -> ChatResponse:
             mode=request.mode.value,
             iterations=0,
             duration_ms=duration_ms,
-            session_id=getattr(agent, "_session_id", None),
+            session_id=request.session_id or request_id,
         )
     except AgentError as e:
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
+        logger.exception("Unexpected error in complete %s", request_id)
         raise HTTPException(status_code=500, detail=f"Internal error: {e}")
 
 
