@@ -7,6 +7,7 @@ Production-ready chatbot backend with AWS Strands, Bedrock, and ag-ui protocol.
 import logging
 from contextlib import asynccontextmanager
 
+import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -29,9 +30,12 @@ async def lifespan(app: FastAPI):
     """
     # Startup
     logger.info("Starting chatbot API")
-    logger.info(f"Bedrock region: {settings.bedrock.region}")
-    logger.info(f"Default model: {settings.bedrock.default_model}")
-    logger.info(f"MCP enabled: {len(settings.mcp.endpoints)} endpoints configured")
+    logger.info("Bedrock region: %s", settings.bedrock.region)
+    logger.info("Default model: %s", settings.bedrock.default_model)
+    logger.info(
+        "MCP enabled: %d endpoints configured",
+        len(settings.mcp.endpoints),
+    )
 
     yield
 
@@ -42,7 +46,10 @@ async def lifespan(app: FastAPI):
 # Create FastAPI application
 app = FastAPI(
     title="Agentic Chatbot API",
-    description="Production-ready chatbot backend with AWS Strands, Bedrock, and ag-ui protocol",
+    description=(
+        "Production-ready chatbot backend with "
+        "AWS Strands, Bedrock, and ag-ui protocol"
+    ),
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -84,8 +91,6 @@ async def health() -> dict[str, str]:
 
 
 if __name__ == "__main__":
-    import uvicorn
-
     uvicorn.run(
         "app.main:app",
         host=settings.server.host,

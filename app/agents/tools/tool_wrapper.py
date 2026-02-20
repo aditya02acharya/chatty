@@ -180,6 +180,7 @@ def with_hooks(
         async def get_current_time():
             return time.time()
     """
+
     def decorator(func):
         return ToolWrapper(
             func,
@@ -187,4 +188,5 @@ def with_hooks(
             description=description,
             hook_registry=hook_registry,
         )
+
     return decorator

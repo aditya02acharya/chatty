@@ -18,6 +18,7 @@ Directory Structure:
 
 import hashlib
 import json
+import re
 import shutil
 import time
 from dataclasses import dataclass, field
@@ -25,11 +26,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
-
 # ---------------------------------------------------------------------------
 # Strategy: cleanup policy
 # ---------------------------------------------------------------------------
+
 
 class CleanupPolicy(str, Enum):
     """Determines when session files are removed.
@@ -47,6 +47,7 @@ class CleanupPolicy(str, Enum):
 # ---------------------------------------------------------------------------
 # Index entry
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class IndexEntry:
@@ -91,8 +92,9 @@ class IndexEntry:
 # Repository: SessionStore
 # ---------------------------------------------------------------------------
 
+
 class SessionStore:
-    """Repository that manages structured session storage with an in-memory index.
+    """Manages structured session storage with an in-memory index.
 
     Public interface
     ----------------
@@ -100,7 +102,8 @@ class SessionStore:
     get_by_tool        – list entries for a specific tool (O(1) dict lookup)
     get_all            – list every entry
     read               – read a stored file by entry id
-    grep               – regex search across previews, then optionally full files
+    grep               – regex search across previews,
+                       then optionally full files
     summary            – aggregate stats the agent can use for orientation
     cleanup            – remove the entire session directory
     """
@@ -144,7 +147,9 @@ class SessionStore:
         tool_args: dict[str, Any],
         result: Any,
     ) -> IndexEntry:
-        """Store a tool result in the structured filesystem and update the index.
+        """Store a tool result and update the index.
+
+        Persists to the structured filesystem.
 
         Returns the IndexEntry for the newly stored file.
         """
@@ -166,7 +171,9 @@ class SessionStore:
             "result": result,
             "timestamp": time.time(),
         }
-        content = json.dumps(payload, indent=2, ensure_ascii=False, default=str)
+        content = json.dumps(
+            payload, indent=2, ensure_ascii=False, default=str
+        )
         abs_path.write_text(content, encoding="utf-8")
 
         # Build index entry with a preview for fast grep
@@ -234,25 +241,29 @@ class SessionStore:
         This avoids reading every file from disk when the preview already
         contains enough signal.
         """
-        import re
-
         flags = 0 if case_sensitive else re.IGNORECASE
         regex = re.compile(pattern, flags)
 
-        entries = self._by_tool.get(tool_filter, []) if tool_filter else self._entries
+        entries = (
+            self._by_tool.get(tool_filter, [])
+            if tool_filter
+            else self._entries
+        )
         matches: list[dict[str, Any]] = []
 
         for entry in entries:
             # Phase 1: check preview (fast, in-memory)
             preview_match = regex.search(entry.preview)
             if preview_match:
-                matches.append({
-                    "entry_id": entry.entry_id,
-                    "tool": entry.tool_name,
-                    "match": preview_match.group(0),
-                    "context": entry.preview,
-                    "source": "preview",
-                })
+                matches.append(
+                    {
+                        "entry_id": entry.entry_id,
+                        "tool": entry.tool_name,
+                        "match": preview_match.group(0),
+                        "context": entry.preview,
+                        "source": "preview",
+                    }
+                )
                 continue
 
             # Phase 2: fall back to full file read
@@ -263,13 +274,15 @@ class SessionStore:
                 if full_match:
                     start = max(0, full_match.start() - 100)
                     end = min(len(content_str), full_match.end() + 100)
-                    matches.append({
-                        "entry_id": entry.entry_id,
-                        "tool": entry.tool_name,
-                        "match": full_match.group(0),
-                        "context": content_str[start:end],
-                        "source": "full",
-                    })
+                    matches.append(
+                        {
+                            "entry_id": entry.entry_id,
+                            "tool": entry.tool_name,
+                            "match": full_match.group(0),
+                            "context": content_str[start:end],
+                            "source": "full",
+                        }
+                    )
             except Exception:
                 continue
 
@@ -318,7 +331,9 @@ class SessionStore:
                 if len(parts) == 2:
                     try:
                         seq = int(parts[1])
-                        self._sequence[safe] = max(self._sequence.get(safe, 0), seq)
+                        self._sequence[safe] = max(
+                            self._sequence.get(safe, 0), seq
+                        )
                     except ValueError:
                         pass
         except (json.JSONDecodeError, KeyError):
@@ -368,12 +383,13 @@ class SessionStore:
             text = result
         else:
             text = json.dumps(result, default=str, ensure_ascii=False)
-        return text[:SessionStore._PREVIEW_LENGTH]
+        return text[: SessionStore._PREVIEW_LENGTH]
 
 
 # ---------------------------------------------------------------------------
 # Lifecycle: context manager with cleanup-policy awareness
 # ---------------------------------------------------------------------------
+
 
 class SessionLifecycle:
     """Manages the full create → use → cleanup lifecycle of a session store.
@@ -413,9 +429,8 @@ class SessionLifecycle:
         if exc_type is not None:
             self._error_occurred = True
 
-        should_cleanup = (
-            self._policy == CleanupPolicy.ALWAYS
-            or (self._policy == CleanupPolicy.ON_ERROR and self._error_occurred)
+        should_cleanup = self._policy == CleanupPolicy.ALWAYS or (
+            self._policy == CleanupPolicy.ON_ERROR and self._error_occurred
         )
 
         if should_cleanup:
@@ -425,27 +440,9 @@ class SessionLifecycle:
 
 
 # ---------------------------------------------------------------------------
-# Backwards-compatible models (kept for imports)
-# ---------------------------------------------------------------------------
-
-class AgentMode(BaseModel):
-    """Agent execution mode."""
-
-    mode: str = Field(description="Mode: fast or agentic")
-    max_tools_fast: int = Field(default=1, description="Max tool calls in fast mode")
-    allow_parallel_fast: bool = Field(
-        default=False, description="Allow parallel tools in fast mode"
-    )
-    filesystem_enabled: bool = Field(
-        default=True, description="Enable filesystem in agentic mode"
-    )
-
-    model_config = {"populate_by_name": True}
-
-
-# ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
+
 
 def create_session_store(
     session_id: str,

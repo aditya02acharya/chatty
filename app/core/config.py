@@ -14,7 +14,7 @@ Usage:
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import ClassVar, Literal
 
 import yaml
 from pydantic import Field
@@ -28,29 +28,26 @@ def _load_yaml_config() -> dict:
         Merged configuration dictionary from all YAML files.
     """
     config_dir = Path(__file__).parent.parent.parent / "config"
-    base_config = {}
-    merged_config = {}
+    merged_config: dict = {}
 
-    # Determine environment
     env = os.getenv("ENVIRONMENT", "dev").lower()
     if env not in ("dev", "prod", "test"):
         env = "dev"
 
-    # Load base config first
     base_path = config_dir / "settings.yaml"
     if base_path.exists():
         with open(base_path) as f:
             base_config = yaml.safe_load(f) or {}
             merged_config.update(base_config)
 
-    # Override with environment-specific config
     env_path = config_dir / f"settings.{env}.yaml"
     if env_path.exists():
         with open(env_path) as f:
             env_config = yaml.safe_load(f) or {}
-            # Deep merge environment config
             for key, value in env_config.items():
-                if key in merged_config and isinstance(merged_config[key], dict):
+                if key in merged_config and isinstance(
+                    merged_config[key], dict
+                ):
                     merged_config[key].update(value)
                 else:
                     merged_config[key] = value
@@ -62,39 +59,59 @@ def _load_yaml_config() -> dict:
 _yaml_config = _load_yaml_config()
 
 
-def _get_nested_value(config: dict, path: str, default=None):
-    """Get a nested value from config dict using dot notation.
+class YamlSettings(BaseSettings):
+    """Base settings class that merges YAML config values.
 
-    Args:
-        config: Configuration dictionary
-        path: Dot-separated path (e.g., 'bedrock.region')
-        default: Default value if path not found
-
-    Returns:
-        Value at path or default
+    Subclasses set ``_yaml_section`` to the top-level YAML key
+    whose values should seed the Pydantic fields.  This avoids
+    duplicating the same ``__init__`` override in every settings
+    class.
     """
-    keys = path.split(".")
-    value = config
-    for key in keys:
-        if isinstance(value, dict):
-            value = value.get(key)
-        else:
-            return default
-    return value if value is not None else default
+
+    _yaml_section: ClassVar[str] = ""
+
+    def __init__(self, **kwargs):
+        yaml_values = _yaml_config.get(self._yaml_section, {})
+        for key, value in yaml_values.items():
+            if key not in kwargs:
+                kwargs[key] = value
+        super().__init__(**kwargs)
 
 
-class ServerSettings(BaseSettings):
+class ServerSettings(YamlSettings):
     """Server configuration settings."""
 
-    host: str = Field(default="0.0.0.0", description="Server host address")
-    port: int = Field(default=8000, description="Server port", ge=1, le=65535)
-    workers: int = Field(default=4, description="Number of worker processes", ge=1)
-    max_concurrent_requests: int = Field(
-        default=2000, description="Max concurrent requests", ge=1
+    _yaml_section: ClassVar[str] = "server"
+
+    host: str = Field(
+        default="0.0.0.0",
+        description="Server host address",
     )
-    keepalive_timeout: int = Field(default=75, description="Keep-alive timeout", ge=1)
+    port: int = Field(
+        default=8000,
+        description="Server port",
+        ge=1,
+        le=65535,
+    )
+    workers: int = Field(
+        default=4,
+        description="Number of worker processes",
+        ge=1,
+    )
+    max_concurrent_requests: int = Field(
+        default=2000,
+        description="Max concurrent requests",
+        ge=1,
+    )
+    keepalive_timeout: int = Field(
+        default=75,
+        description="Keep-alive timeout",
+        ge=1,
+    )
     graceful_shutdown_timeout: int = Field(
-        default=30, description="Graceful shutdown timeout", ge=1
+        default=30,
+        description="Graceful shutdown timeout",
+        ge=1,
     )
 
     model_config = SettingsConfigDict(
@@ -104,20 +121,20 @@ class ServerSettings(BaseSettings):
         extra="ignore",
     )
 
-    def __init__(self, **kwargs):
-        # Initialize with YAML defaults if not provided
-        yaml_values = _yaml_config.get("server", {})
-        for key, value in yaml_values.items():
-            if key not in kwargs:
-                kwargs[key] = value
-        super().__init__(**kwargs)
 
-
-class BedrockSettings(BaseSettings):
+class BedrockSettings(YamlSettings):
     """AWS Bedrock configuration settings."""
 
-    region: str = Field(default="us-east-1", description="AWS region")
-    profile: str | None = Field(default=None, description="AWS profile name")
+    _yaml_section: ClassVar[str] = "bedrock"
+
+    region: str = Field(
+        default="us-east-1",
+        description="AWS region",
+    )
+    profile: str | None = Field(
+        default=None,
+        description="AWS profile name",
+    )
     default_model: str = Field(
         default="anthropic.claude-sonnet-4-20250514",
         description="Default model ID",
@@ -131,10 +148,19 @@ class BedrockSettings(BaseSettings):
         description="Model name to ID mapping",
     )
     auth_method: Literal["iam", "api_key"] = Field(
-        default="iam", description="Authentication method"
+        default="iam",
+        description="Authentication method",
     )
-    timeout: int = Field(default=60, description="Request timeout in seconds", ge=1)
-    max_retries: int = Field(default=3, description="Maximum retry attempts", ge=0)
+    timeout: int = Field(
+        default=60,
+        description="Request timeout in seconds",
+        ge=1,
+    )
+    max_retries: int = Field(
+        default=3,
+        description="Maximum retry attempts",
+        ge=0,
+    )
     inference_config: dict = Field(
         default_factory=lambda: {
             "max_tokens": 4096,
@@ -152,19 +178,22 @@ class BedrockSettings(BaseSettings):
         extra="ignore",
     )
 
-    def __init__(self, **kwargs):
-        yaml_values = _yaml_config.get("bedrock", {})
-        for key, value in yaml_values.items():
-            if key not in kwargs:
-                kwargs[key] = value
-        super().__init__(**kwargs)
 
-
-class MCPSettings(BaseSettings):
+class MCPSettings(YamlSettings):
     """MCP (Model Context Protocol) configuration settings."""
 
-    timeout: int = Field(default=30, description="MCP request timeout", ge=1)
-    max_retries: int = Field(default=2, description="Maximum retry attempts", ge=0)
+    _yaml_section: ClassVar[str] = "mcp"
+
+    timeout: int = Field(
+        default=30,
+        description="MCP request timeout",
+        ge=1,
+    )
+    max_retries: int = Field(
+        default=2,
+        description="Maximum retry attempts",
+        ge=0,
+    )
     endpoints: list[dict] = Field(
         default_factory=list,
         description="Remote MCP endpoints configuration",
@@ -177,30 +206,34 @@ class MCPSettings(BaseSettings):
         extra="ignore",
     )
 
-    def __init__(self, **kwargs):
-        yaml_values = _yaml_config.get("mcp", {})
-        for key, value in yaml_values.items():
-            if key not in kwargs:
-                kwargs[key] = value
-        super().__init__(**kwargs)
 
-
-class AgentSettings(BaseSettings):
+class AgentSettings(YamlSettings):
     """Agent behavior configuration settings."""
 
+    _yaml_section: ClassVar[str] = "agent"
+
     max_iterations: int = Field(
-        default=10, description="Maximum agent loop iterations", ge=1
+        default=10,
+        description="Maximum agent loop iterations",
+        ge=1,
     )
     tool_timeout: int = Field(
-        default=30, description="Tool execution timeout", ge=1
+        default=30,
+        description="Tool execution timeout",
+        ge=1,
     )
     reflection_enabled: bool = Field(
-        default=True, description="Enable reflection after tool use"
+        default=True,
+        description="Enable reflection after tool use",
     )
     system_prompt: str = Field(
-        default="""You are a helpful AI assistant with access to various tools.
-Use tools when needed to provide accurate and helpful responses.
-Always explain your reasoning when using tools.""",
+        default=(
+            "You are a helpful AI assistant with access to "
+            "various tools.\n"
+            "Use tools when needed to provide accurate and "
+            "helpful responses.\n"
+            "Always explain your reasoning when using tools."
+        ),
         description="System prompt for the agent",
     )
 
@@ -211,22 +244,21 @@ Always explain your reasoning when using tools.""",
         extra="ignore",
     )
 
-    def __init__(self, **kwargs):
-        yaml_values = _yaml_config.get("agent", {})
-        for key, value in yaml_values.items():
-            if key not in kwargs:
-                kwargs[key] = value
-        super().__init__(**kwargs)
 
-
-class AGUISettings(BaseSettings):
+class AGUISettings(YamlSettings):
     """ag-ui protocol configuration settings."""
 
+    _yaml_section: ClassVar[str] = "agui"
+
     buffer_size: int = Field(
-        default=8192, description="Event buffer size for SSE", ge=1024
+        default=8192,
+        description="Event buffer size for SSE",
+        ge=1024,
     )
     heartbeat_interval: int = Field(
-        default=15, description="Heartbeat interval for SSE connections", ge=1
+        default=15,
+        description="Heartbeat interval for SSE connections",
+        ge=1,
     )
     event_types: list[str] = Field(
         default_factory=lambda: [
@@ -248,26 +280,31 @@ class AGUISettings(BaseSettings):
         extra="ignore",
     )
 
-    def __init__(self, **kwargs):
-        yaml_values = _yaml_config.get("agui", {})
-        for key, value in yaml_values.items():
-            if key not in kwargs:
-                kwargs[key] = value
-        super().__init__(**kwargs)
 
-
-class LogSettings(BaseSettings):
+class LogSettings(YamlSettings):
     """Logging configuration settings."""
+
+    _yaml_section: ClassVar[str] = "logging"
 
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
         default="INFO", description="Log level"
     )
     format: Literal["json", "text"] = Field(
-        default="json", description="Log format"
+        default="json",
+        description="Log format",
     )
-    include_timestamp: bool = Field(default=True, description="Include timestamp")
-    include_caller: bool = Field(default=True, description="Include caller info")
-    telemetry_enabled: bool = Field(default=False, description="Enable telemetry")
+    include_timestamp: bool = Field(
+        default=True,
+        description="Include timestamp",
+    )
+    include_caller: bool = Field(
+        default=True,
+        description="Include caller info",
+    )
+    telemetry_enabled: bool = Field(
+        default=False,
+        description="Enable telemetry",
+    )
 
     model_config = SettingsConfigDict(
         env_prefix="LOG_",
@@ -276,16 +313,9 @@ class LogSettings(BaseSettings):
         extra="ignore",
     )
 
-    def __init__(self, **kwargs):
-        yaml_values = _yaml_config.get("logging", {})
-        for key, value in yaml_values.items():
-            if key not in kwargs:
-                kwargs[key] = value
-        super().__init__(**kwargs)
-
 
 class Settings:
-    """Central settings container aggregating all modular settings.
+    """Central settings container aggregating all modules.
 
     Usage:
         from app.core.config import settings
@@ -303,7 +333,7 @@ class Settings:
         self.log = LogSettings()
 
     def reload(self) -> None:
-        """Reload all settings from config files and environment."""
+        """Reload all settings from config files."""
         global _yaml_config
         _yaml_config = _load_yaml_config()
         self.__init__()

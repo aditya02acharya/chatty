@@ -4,11 +4,17 @@ Reusable agent node patterns using strands SDK.
 Provides composable patterns for building agent workflows.
 """
 
+import asyncio
+import re
 from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel, Field
 from strands import ToolContext
+from strands.hooks import (
+    AfterToolCallEvent,
+    BeforeToolCallEvent,
+)
 from strands.models import BedrockModel
 
 from app.core.config import settings
@@ -82,7 +88,6 @@ class ToolNode:
 
         # Pre-hook
         if self._hook_registry:
-            from strands.hooks import BeforeToolCallEvent
             await self._hook_registry.execute(
                 BeforeToolCallEvent(
                     tool_name=tool_name,
@@ -100,7 +105,6 @@ class ToolNode:
 
             # Post-hook
             if self._hook_registry:
-                from strands.hooks import AfterToolCallEvent
                 await self._hook_registry.execute(
                     AfterToolCallEvent(
                         tool_name=tool_name,
@@ -114,7 +118,6 @@ class ToolNode:
         except Exception as e:
             # Post-hook with error
             if self._hook_registry:
-                from strands.hooks import AfterToolCallEvent
                 await self._hook_registry.execute(
                     AfterToolCallEvent(
                         tool_name=tool_name,
@@ -140,12 +143,7 @@ class ToolNode:
         Returns:
             List of (tool_name, result, error) tuples
         """
-        import asyncio
-
-        tasks = [
-            self.execute(name, args, context)
-            for name, args in calls
-        ]
+        tasks = [self.execute(name, args, context) for name, args in calls]
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -180,7 +178,9 @@ class ReflectionNode:
             model_id=settings.bedrock.default_model,
             region_name=settings.bedrock.region,
         )
-        self._reflection_prompt = reflection_prompt or self._default_reflection_prompt()
+        self._reflection_prompt = (
+            reflection_prompt or self._default_reflection_prompt()
+        )
 
     def _default_reflection_prompt(self) -> str:
         """Default reflection prompt template."""
@@ -228,7 +228,10 @@ Respond in JSON format:
         # Use structured output for JSON response
         response = await self._model.structured_output_async(
             messages=[{"role": "user", "content": [{"text": prompt}]}],
-            system_prompt="You are a helpful assistant that analyzes tool results.",
+            system_prompt=(
+                "You are a helpful assistant that"
+                " analyzes tool results."
+            ),
         )
 
         return response.content
@@ -255,11 +258,14 @@ class SynthesisNode:
             model_id=settings.bedrock.default_model,
             region_name=settings.bedrock.region,
         )
-        self._synthesis_prompt = synthesis_prompt or self._default_synthesis_prompt()
+        self._synthesis_prompt = (
+            synthesis_prompt or self._default_synthesis_prompt()
+        )
 
     def _default_synthesis_prompt(self) -> str:
         """Default synthesis prompt template."""
-        return """Synthesize the following information into a coherent response:
+        return """Synthesize the following information
+into a coherent response:
 
 User Query: {query}
 
@@ -284,10 +290,12 @@ If information is missing or contradictory, acknowledge this in your response.
         Returns:
             Synthesized response
         """
-        info_text = "\n".join([
-            f"- {source}: {str(result)[:500]}"
-            for source, result in information
-        ])
+        info_text = "\n".join(
+            [
+                f"- {source}: {str(result)[:500]}"
+                for source, result in information
+            ]
+        )
 
         prompt = self._synthesis_prompt.format(
             query=query,
@@ -296,7 +304,10 @@ If information is missing or contradictory, acknowledge this in your response.
 
         response = await self._model.stream_async(
             messages=[{"role": "user", "content": [{"text": prompt}]}],
-            system_prompt="You are a helpful assistant that synthesizes information.",
+            system_prompt=(
+                "You are a helpful assistant that"
+                " synthesizes information."
+            ),
         )
 
         # Collect streamed response
@@ -352,10 +363,9 @@ class RoutingNode:
         if available_tools:
             tools_text = f"Available tools: {', '.join(available_tools)}"
 
-        routes_text = "\n".join([
-            f"- {name}: {desc}"
-            for name, desc in self._routes.items()
-        ])
+        routes_text = "\n".join(
+            [f"- {name}: {desc}" for name, desc in self._routes.items()]
+        )
 
         prompt = f"""Analyze the following query and determine the best route:
 
@@ -393,8 +403,12 @@ class ValidationNode:
     class ValidationCriteria(BaseModel):
         """Criteria for validation."""
 
-        min_length: int = Field(default=10, description="Minimum response length")
-        max_length: int = Field(default=5000, description="Maximum response length")
+        min_length: int = Field(
+            default=10, description="Minimum response length"
+        )
+        max_length: int = Field(
+            default=5000, description="Maximum response length"
+        )
         required_keywords: list[str] = Field(
             default_factory=list, description="Required keywords"
         )
@@ -434,9 +448,15 @@ class ValidationNode:
 
         # Check length
         if len(response) < self._criteria.min_length:
-            errors.append(f"Response too short: {len(response)} < {self._criteria.min_length}")
+            errors.append(
+                f"Response too short: {len(response)}"
+                f" < {self._criteria.min_length}"
+            )
         if len(response) > self._criteria.max_length:
-            errors.append(f"Response too long: {len(response)} > {self._criteria.max_length}")
+            errors.append(
+                f"Response too long: {len(response)}"
+                f" > {self._criteria.max_length}"
+            )
 
         # Check required keywords
         for keyword in self._criteria.required_keywords:
@@ -444,7 +464,6 @@ class ValidationNode:
                 errors.append(f"Missing required keyword: {keyword}")
 
         # Check forbidden patterns
-        import re
         for pattern in self._criteria.forbidden_patterns:
             if re.search(pattern, response):
                 errors.append(f"Contains forbidden pattern: {pattern}")
@@ -458,13 +477,17 @@ class ValidationNode:
 {response}
 
 Errors:
-{chr(10).join(f'- {e}' for e in errors)}
+{chr(10).join(f"- {e}" for e in errors)}
 
-Please fix the response to address these errors while maintaining the original meaning.
+Please fix the response to address these errors
+while maintaining the original meaning.
 """
             fixed_response = await self._model.stream_async(
                 messages=[{"role": "user", "content": [{"text": fix_prompt}]}],
-                system_prompt="You are a helpful assistant that fixes invalid responses.",
+                system_prompt=(
+                    "You are a helpful assistant that"
+                    " fixes invalid responses."
+                ),
             )
 
             full_fixed = ""

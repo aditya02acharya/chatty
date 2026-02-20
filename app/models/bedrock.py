@@ -24,7 +24,8 @@ class BedrockProvider:
         """Initialize the Bedrock provider.
 
         Args:
-            model_id: Model ID to use (defaults to settings.bedrock.default_model)
+            model_id: Model ID to use
+                (defaults to settings.bedrock.default_model)
             region: AWS region (defaults to settings.bedrock.region)
         """
         self._model_id = model_id or settings.bedrock.default_model
@@ -52,7 +53,8 @@ class BedrockProvider:
         Args:
             prompt: User prompt
             system_prompt: Optional system prompt
-            **inference_config: Inference parameters (max_tokens, temperature, etc.)
+            **inference_config: Inference parameters
+                (max_tokens, temperature, etc.)
 
         Returns:
             Model response text
@@ -88,7 +90,8 @@ class BedrockProvider:
         Args:
             prompt: User prompt
             system_prompt: Optional system prompt
-            **inference_config: Inference parameters (max_tokens, temperature, etc.)
+            **inference_config: Inference parameters
+                (max_tokens, temperature, etc.)
 
         Yields:
             Response text chunks as they arrive

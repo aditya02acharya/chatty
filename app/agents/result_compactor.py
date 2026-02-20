@@ -14,7 +14,8 @@ receipt contains:
 Design Principles:
 - Zero LLM calls – purely heuristic, no latency cost.
 - Structural awareness – understands JSON objects/arrays to give richer gaps.
-- Conservative – small results pass through unmodified (below MIN_COMPACT_SIZE).
+- Conservative – small results pass through unmodified
+  (below MIN_COMPACT_SIZE).
 """
 
 from __future__ import annotations
@@ -23,10 +24,10 @@ import json
 import re
 from dataclasses import dataclass
 
-
 # ---------------------------------------------------------------------------
 # Compact receipt
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class CompactReceipt:
@@ -42,8 +43,8 @@ class CompactReceipt:
             f"[session_fs: {self.entry_id} | {self._human_size()}]\n"
             f"Preview:\n{self.preview}\n"
             f"Gap: {self.gap}\n"
-            f"Retrieve: session_grep(\"<pattern>\") or "
-            f"read_session_file(\"{self.entry_id}\")"
+            f'Retrieve: session_grep("<pattern>") or '
+            f'read_session_file("{self.entry_id}")'
         )
 
     def _human_size(self) -> str:
@@ -59,12 +60,14 @@ class CompactReceipt:
 # ---------------------------------------------------------------------------
 
 # Tools whose results should never be compacted (they are already selective).
-PASSTHROUGH_TOOLS: frozenset[str] = frozenset({
-    "session_grep",
-    "session_summary",
-    "read_session_file",
-    "get_current_time",
-})
+PASSTHROUGH_TOOLS: frozenset[str] = frozenset(
+    {
+        "session_grep",
+        "session_summary",
+        "read_session_file",
+        "get_current_time",
+    }
+)
 
 # Results shorter than this are not worth compacting.
 MIN_COMPACT_SIZE = 500
@@ -78,7 +81,7 @@ class ResultCompactor:
     """Produces compact receipts from large tool results."""
 
     def should_compact(self, tool_name: str, text: str) -> bool:
-        """Return True if this result is large enough to benefit from compaction."""
+        """Return True if result is large enough for compaction."""
         if tool_name in PASSTHROUGH_TOOLS:
             return False
         return len(text) > MIN_COMPACT_SIZE
@@ -139,7 +142,9 @@ class ResultCompactor:
             if hidden:
                 sample = hidden[:8]
                 label = ", ".join(sample)
-                extra = f" (+{len(hidden) - 8} more)" if len(hidden) > 8 else ""
+                extra = (
+                    f" (+{len(hidden) - 8} more)" if len(hidden) > 8 else ""
+                )
                 hints.append(
                     f"JSON object with {len(keys)} keys; "
                     f"not in preview: {label}{extra}"
@@ -169,9 +174,13 @@ class ResultCompactor:
             )
 
         # Surface unique capitalised terms from the hidden portion.
-        hidden = text[len(preview):]
-        hidden_terms = set(re.findall(r"\b[A-Z][a-z]{2,}(?:\s[A-Z][a-z]+)*\b", hidden))
-        preview_terms = set(re.findall(r"\b[A-Z][a-z]{2,}(?:\s[A-Z][a-z]+)*\b", preview))
+        hidden = text[len(preview) :]
+        hidden_terms = set(
+            re.findall(r"\b[A-Z][a-z]{2,}(?:\s[A-Z][a-z]+)*\b", hidden)
+        )
+        preview_terms = set(
+            re.findall(r"\b[A-Z][a-z]{2,}(?:\s[A-Z][a-z]+)*\b", preview)
+        )
         unique = hidden_terms - preview_terms
         if unique:
             sample = sorted(unique)[:6]

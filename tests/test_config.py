@@ -13,6 +13,7 @@ from app.core.config import Settings, get_settings
 def reset_settings():
     """Reset settings singleton between tests."""
     import app.core.config as config_module
+
     config_module._yaml_config = config_module._load_yaml_config()
     config_module.get_settings.cache_clear()
     yield
@@ -84,7 +85,8 @@ def test_log_settings_defaults(reset_settings):
 def test_env_override(reset_settings, monkeypatch):
     """Test that environment variables can be read by Pydantic Settings.
 
-    Note: In our implementation, YAML config values take priority over env vars.
+    Note: In our implementation, YAML config values take
+    priority over env vars.
     This is a valid design choice for config file management.
     """
     # Set env var - Pydantic Settings can read it even if not used

@@ -54,9 +54,16 @@ class ChatRequest(BaseModel):
     """Request model for chat endpoint."""
 
     message: str = Field(description="User message", min_length=1)
-    mode: ChatMode = Field(default=ChatMode.AUTO, description="Execution mode: fast, agentic, or auto")
-    model_id: str | None = Field(default=None, description="Optional model ID override")
-    session_id: str | None = Field(default=None, description="Session ID for agentic mode storage")
+    mode: ChatMode = Field(
+        default=ChatMode.AUTO,
+        description="Execution mode: fast, agentic, or auto",
+    )
+    model_id: str | None = Field(
+        default=None, description="Optional model ID override"
+    )
+    session_id: str | None = Field(
+        default=None, description="Session ID for agentic mode storage"
+    )
 
     model_config = {"use_enum_values": True}
 
@@ -67,9 +74,13 @@ class ChatResponse(BaseModel):
     request_id: str = Field(description="Unique request identifier")
     response: str = Field(description="Agent response")
     mode: str = Field(description="Mode used for processing")
-    iterations: int = Field(default=0, description="Number of agent iterations")
+    iterations: int = Field(
+        default=0, description="Number of agent iterations"
+    )
     duration_ms: float = Field(description="Execution time in milliseconds")
-    session_id: str | None = Field(default=None, description="Session ID if created")
+    session_id: str | None = Field(
+        default=None, description="Session ID if created"
+    )
 
 
 @router.post("/stream")
@@ -87,7 +98,9 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
         encoder = EventEncoder()
         try:
             async with create_chatbot_agent(**_agent_kwargs(request)) as agent:
-                async for chunk in agent.chat_stream(request.message, request_id):
+                async for chunk in agent.chat_stream(
+                    request.message, request_id
+                ):
                     yield chunk
 
         except asyncio.CancelledError:

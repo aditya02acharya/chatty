@@ -36,28 +36,38 @@ async def list_tools() -> list[ToolInfo]:
 
             # Local tools – use the agent's public factory
             for tool_func in agent._create_local_tools(None):
-                name = tool_func.name if hasattr(tool_func, "name") else tool_func.__name__
-                tools.append(ToolInfo(
-                    name=name,
-                    description=tool_func.__doc__,
-                    is_remote=False,
-                ))
+                name = (
+                    tool_func.name
+                    if hasattr(tool_func, "name")
+                    else tool_func.__name__
+                )
+                tools.append(
+                    ToolInfo(
+                        name=name,
+                        description=tool_func.__doc__,
+                        is_remote=False,
+                    )
+                )
 
             # MCP tools – use the managed context manager
             async with create_mcp_manager() as mcp:
                 mcp_tools = await mcp.list_tools()
                 for tool_name, (server_name, tool_spec) in mcp_tools.items():
-                    tools.append(ToolInfo(
-                        name=tool_name,
-                        description=tool_spec.get("description"),
-                        input_schema=tool_spec.get("inputSchema"),
-                        is_remote=True,
-                        server_name=server_name,
-                    ))
+                    tools.append(
+                        ToolInfo(
+                            name=tool_name,
+                            description=tool_spec.get("description"),
+                            input_schema=tool_spec.get("inputSchema"),
+                            is_remote=True,
+                            server_name=server_name,
+                        )
+                    )
 
             return tools
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to list tools: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to list tools: {e}"
+        )
 
 
 @router.get("/health")

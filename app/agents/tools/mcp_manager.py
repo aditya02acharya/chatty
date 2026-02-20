@@ -120,7 +120,9 @@ class MCPServerConnection:
             result = await asyncio.to_thread(self._client.list_tools_sync)
             return result.get("tools", [])
         except Exception as e:
-            raise MCPError(f"Failed to list tools from {self.name}: {e}") from e
+            raise MCPError(
+                f"Failed to list tools from {self.name}: {e}"
+            ) from e
 
     async def call_tool(
         self,
@@ -196,7 +198,9 @@ class MCPServerConnection:
             result = await asyncio.to_thread(self._client.list_resources_sync)
             return result.get("resources", [])
         except Exception as e:
-            raise MCPError(f"Failed to list resources from {self.name}: {e}") from e
+            raise MCPError(
+                f"Failed to list resources from {self.name}: {e}"
+            ) from e
 
     async def list_resource_templates(self) -> list[dict[str, Any]]:
         """List available resource templates from this server.
@@ -208,10 +212,14 @@ class MCPServerConnection:
             await self.start()
 
         try:
-            result = await asyncio.to_thread(self._client.list_resource_templates_sync)
+            result = await asyncio.to_thread(
+                self._client.list_resource_templates_sync
+            )
             return result.get("resourceTemplates", [])
         except Exception as e:
-            raise MCPError(f"Failed to list resource templates from {self.name}: {e}") from e
+            raise MCPError(
+                f"Failed to list resource templates from {self.name}: {e}"
+            ) from e
 
     async def read_resource(self, uri: str) -> Any:
         """Read a resource from this server.
@@ -232,7 +240,9 @@ class MCPServerConnection:
             )
             return result
         except Exception as e:
-            raise MCPError(f"Failed to read resource {uri} from {self.name}: {e}") from e
+            raise MCPError(
+                f"Failed to read resource {uri} from {self.name}: {e}"
+            ) from e
 
     # ===== Prompts =====
 
@@ -249,7 +259,9 @@ class MCPServerConnection:
             result = await asyncio.to_thread(self._client.list_prompts_sync)
             return result.get("prompts", [])
         except Exception as e:
-            raise MCPError(f"Failed to list prompts from {self.name}: {e}") from e
+            raise MCPError(
+                f"Failed to list prompts from {self.name}: {e}"
+            ) from e
 
     async def get_prompt(
         self,
@@ -276,7 +288,9 @@ class MCPServerConnection:
             )
             return result
         except Exception as e:
-            raise MCPError(f"Failed to get prompt {prompt_name} from {self.name}: {e}") from e
+            raise MCPError(
+                f"Failed to get prompt {prompt_name} from {self.name}: {e}"
+            ) from e
 
 
 class MCPManager:
@@ -366,9 +380,7 @@ class MCPManager:
             Dict with 'tools', 'resources', 'prompts' keys
         """
         # Start all connections
-        start_tasks = [
-            conn.start() for conn in self._connections.values()
-        ]
+        start_tasks = [conn.start() for conn in self._connections.values()]
         await asyncio.gather(*start_tasks, return_exceptions=True)
 
         result = {
@@ -435,7 +447,8 @@ class MCPManager:
 
         Args:
             tool_name: Name of the tool to call
-            server_name: Name of the server (required if tool exists on multiple servers)
+            server_name: Name of the server (required
+                if tool exists on multiple servers)
             arguments: Tool arguments
 
         Returns:
@@ -568,9 +581,7 @@ class MCPManager:
 
     async def cleanup(self) -> None:
         """Cleanup all connections."""
-        stop_tasks = [
-            conn.stop() for conn in self._connections.values()
-        ]
+        stop_tasks = [conn.stop() for conn in self._connections.values()]
         await asyncio.gather(*stop_tasks, return_exceptions=True)
 
 
