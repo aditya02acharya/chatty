@@ -110,7 +110,8 @@ class ResultCompactor:
 
     def _analyze_gap(self, text: str, preview: str) -> str:
         total = len(text)
-        shown = len(preview.rstrip("."))  # ignore trailing "..."
+        # Strip only the truncation ellipsis, not arbitrary trailing dots
+        shown = len(preview[:-3]) if preview.endswith("...") else len(preview)
 
         if total <= shown:
             return "Preview contains the complete result."

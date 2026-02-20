@@ -35,6 +35,15 @@ from app.core.config import settings
 from app.core.exceptions import StreamDisconnectedError
 
 
+class _HeartbeatSentinel:
+    """Internal marker pushed to the queue to emit an SSE heartbeat comment."""
+
+    __slots__ = ("ts",)
+
+    def __init__(self, ts: int):
+        self.ts = ts
+
+
 class AGUIStreamer:
     """ag-ui protocol event streamer.
 
@@ -79,10 +88,10 @@ class AGUIStreamer:
         await self.emit(RunStartedEvent(thread_id=self.request_id))
 
     async def thinking_start(self, message: str | None = None) -> None:
-        """Emit a thinking start event."""
+        """Emit a thinking start event, optionally followed by content."""
+        await self.emit(ThinkingStartEvent())
         if message:
             await self.emit(ThinkingTextMessageContentEvent(content=message))
-        await self.emit(ThinkingStartEvent())
 
     async def thinking_end(self) -> None:
         """Emit a thinking end event."""
@@ -185,14 +194,19 @@ class AGUIStreamer:
 
         try:
             while True:
-                event = await self._queue.get()
+                item = await self._queue.get()
 
                 # Sentinel for end of stream
-                if event is None:
+                if item is None:
                     break
 
+                # Heartbeat sentinel – emit SSE comment, not an encoded event
+                if isinstance(item, _HeartbeatSentinel):
+                    yield f": heartbeat {item.ts}\n\n"
+                    continue
+
                 self._last_event_time = time.time()
-                yield self._encoder.encode(event)
+                yield self._encoder.encode(item)
         finally:
             heartbeat_task.cancel()
             try:
@@ -201,7 +215,7 @@ class AGUIStreamer:
                 pass
 
     async def _heartbeat_generator(self) -> None:
-        """Generate heartbeat comments when no other events are being sent."""
+        """Push heartbeat sentinels to the queue when idle."""
         from app.core.config import settings
 
         interval = settings.agui.heartbeat_interval
@@ -212,9 +226,10 @@ class AGUIStreamer:
             # Only send heartbeat if no events have been sent recently
             idle_time = time.time() - self._last_event_time
             if idle_time >= interval:
-                # Send SSE heartbeat comment
                 try:
-                    yield f": heartbeat {int(time.time())}\n\n"  # type: ignore
+                    await self._queue.put(
+                        _HeartbeatSentinel(ts=int(time.time()))
+                    )
                 except asyncio.CancelledError:
                     break
 

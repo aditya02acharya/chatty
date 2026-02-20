@@ -49,7 +49,7 @@ from app.agents.session_fs import (
     SessionLifecycle,
     SessionStore,
 )
-from app.agents.tools import MCPManager
+from app.agents.tools import MCPManager, create_mcp_manager
 from app.core.config import settings
 from app.core.exceptions import AgentError
 from app.streaming import AGUIStreamer
@@ -326,11 +326,15 @@ class SmartAgentHook(HookProvider):
         # 4. Replace the conversation result with a compact receipt
         if self._compactor.should_compact(tool_name, text):
             receipt = self._compactor.compact(entry.entry_id, text)
-            event.result = {
+            compact_result: dict[str, Any] = {
                 "content": [{"text": receipt.format()}],
-                "status": result.get("status", "success"),
-                "toolUseId": result["toolUseId"],
             }
+            # Preserve status and toolUseId when the original result is a dict
+            if isinstance(result, dict):
+                compact_result["status"] = result.get("status", "success")
+                if "toolUseId" in result:
+                    compact_result["toolUseId"] = result["toolUseId"]
+            event.result = compact_result
 
 
 def _extract_text(result: Any) -> str:
@@ -485,7 +489,7 @@ class HybridChatbotAgent(BaseModel):
         ]
 
         if self.enable_mcp:
-            async with MCPManager() as mcp:
+            async with create_mcp_manager() as mcp:
                 all_tools = await mcp.discover_all()
                 tools.extend(all_tools["tools"].keys())
 
@@ -551,7 +555,7 @@ class HybridChatbotAgent(BaseModel):
                 # Step 4: Build the Strands agent
                 tools = self._create_local_tools(store)
                 if self.enable_mcp:
-                    async with MCPManager() as mcp:
+                    async with create_mcp_manager() as mcp:
                         mcp_tools = await mcp.load_strands_tools()
                         tools.extend(mcp_tools)
 
@@ -585,9 +589,9 @@ class HybridChatbotAgent(BaseModel):
                 await streamer.content_start()
                 await streamer.content_delta(full_response)
                 await streamer.content_end()
-                yield streamer._encoder.encode(full_response)
-
                 await streamer.done()
+
+                yield full_response
 
             except asyncio.CancelledError:
                 # Client disconnected – ensure cleanup runs
