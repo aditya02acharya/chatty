@@ -9,6 +9,9 @@ from strands.agent.conversation_manager import (
     NullConversationManager,
     SlidingWindowConversationManager,
 )
+from strands.agent.conversation_manager.conversation_manager import (
+    ConversationManager,
+)
 from strands.hooks import HookProvider
 from strands.models import BedrockModel
 
@@ -52,6 +55,7 @@ def create_researcher(
     model: BedrockModel,
     tools: list | None = None,
     hooks: list[HookProvider] | None = None,
+    conversation_manager: ConversationManager | None = None,
 ) -> Agent:
     """Research agent for the CALL_TOOL path.
 
@@ -59,13 +63,19 @@ def create_researcher(
     SmartAgentHook for result compaction.  Internally handles
     the tool-execute / reflect / need-more loop via the
     Strands Agent's native tool loop.
+
+    When ``conversation_manager`` is provided (e.g. a
+    PostgresConversationManager), it is used instead of the
+    default SlidingWindowConversationManager.
     """
+    if conversation_manager is None:
+        conversation_manager = SlidingWindowConversationManager(
+            window_size=100
+        )
     return Agent(
         model=model,
         tools=tools or [],
         system_prompt=researcher_prompt(),
-        conversation_manager=SlidingWindowConversationManager(
-            max_messages=100
-        ),
+        conversation_manager=conversation_manager,
         hooks=hooks or [],
     )

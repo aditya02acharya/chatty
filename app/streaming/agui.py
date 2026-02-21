@@ -11,10 +11,11 @@ from contextlib import asynccontextmanager
 
 from ag_ui.core.events import (
     BaseEvent,
+    CustomEvent,
     RunErrorEvent,
     RunFinishedEvent,
     RunStartedEvent,
-    State,
+    StateSnapshotEvent,
     StepFinishedEvent,
     StepStartedEvent,
     TextMessageContentEvent,
@@ -141,6 +142,54 @@ class AGUIStreamer:
         """Emit a text message end event."""
         await self.emit(TextMessageEndEvent(role=TextMessageRole.AGENT))
 
+    async def status(self, phase: str, detail: str = "") -> None:
+        """Emit a status snapshot so the frontend can display progress.
+
+        Args:
+            phase: Short machine-readable phase name
+                (e.g. "loading_history", "compacting", "elicitation").
+            detail: Optional human-readable detail string.
+        """
+        await self.emit(
+            StateSnapshotEvent(
+                snapshot={
+                    "key": "status",
+                    "value": {"phase": phase, "detail": detail},
+                },
+            )
+        )
+
+    async def elicitation_request(
+        self,
+        tool_name: str,
+        interrupt_id: str,
+        reason: str,
+        schema: dict | None = None,
+    ) -> None:
+        """Emit an elicitation event asking the frontend for user input.
+
+        The frontend should display the reason / schema to the user
+        and POST the response back, which is then fed to the agent
+        as an interrupt response.
+
+        Args:
+            tool_name: The tool requesting information.
+            interrupt_id: Unique interrupt identifier for resumption.
+            reason: Human-readable explanation of what is needed.
+            schema: Optional JSON Schema describing the expected input.
+        """
+        await self.emit(
+            CustomEvent(
+                name="elicitation_request",
+                value={
+                    "tool_name": tool_name,
+                    "interrupt_id": interrupt_id,
+                    "reason": reason,
+                    "schema": schema,
+                },
+            )
+        )
+
     async def error(self, error_code: str, error_message: str) -> None:
         """Emit a run error event."""
         await self.emit(
@@ -161,11 +210,15 @@ class AGUIStreamer:
             await self.content_delta(final_response)
             await self.content_end()
 
-        # Create final state
-        final_state = State(
-            key="final",
-            value={"iterations": self._iterations, "duration_ms": duration_ms},
-        )
+        # Create final state (State is typing.Any in ag-ui-protocol,
+        # so we use a plain dict.)
+        final_state = {
+            "key": "final",
+            "value": {
+                "iterations": self._iterations,
+                "duration_ms": duration_ms,
+            },
+        }
 
         await self.emit(
             RunFinishedEvent(

@@ -18,6 +18,9 @@ answers and clarifications.  The researcher uses tools, session
 filesystem, and the SmartAgentHook for result compaction.  The
 Strands Agent's native tool loop handles the internal
 execute → reflect → need-more cycle inside the researcher.
+
+Conversation history is persisted to PostgreSQL when a session_id
+is provided, using ``PostgresConversationManager``.
 """
 
 import asyncio
@@ -39,6 +42,9 @@ from app.agents.agents import (
 from app.agents.hook import SmartAgentHook
 from app.agents.local_tools import create_session_tools
 from app.agents.mode import ExecutionMode
+from app.agents.postgres_conversation_manager import (
+    PostgresConversationManager,
+)
 from app.agents.session_fs import (
     CleanupPolicy,
     SessionLifecycle,
@@ -185,6 +191,9 @@ class ChatGraph:
 
         async with create_streamer(request_id) as streamer:
             await streamer.run_started()
+            await streamer.status(
+                "initialising", f"Mode: {self.mode.value}"
+            )
             await streamer.thinking_start(
                 f"Mode: {self.mode.value}"
             )
@@ -211,23 +220,47 @@ class ChatGraph:
                     store = await lifecycle.__aenter__()
 
                 # --- build tools --------------------------------
+                await streamer.status(
+                    "loading_tools", "Loading tools"
+                )
                 tools = create_session_tools(store)
                 if self.enable_mcp:
                     async with create_mcp_manager() as mcp:
                         mcp_tools = await mcp.load_strands_tools()
                         tools.extend(mcp_tools)
 
+                # --- build conversation manager -----------------
+                conv_manager = None
+                if self.session_id:
+                    await streamer.status(
+                        "loading_history",
+                        "Loading conversation history",
+                    )
+                    conv_manager = PostgresConversationManager(
+                        session_id=self.session_id,
+                        window_size=100,
+                    )
+
                 # --- build agents -------------------------------
+                await streamer.status(
+                    "building_agents", "Building agents"
+                )
                 hook = SmartAgentHook(
                     streamer, self.mode, store
                 )
                 supervisor = create_supervisor(self._model)
                 responder = create_responder(self._model, tools)
                 researcher = create_researcher(
-                    self._model, tools, [hook]
+                    self._model,
+                    tools,
+                    [hook],
+                    conversation_manager=conv_manager,
                 )
 
                 # --- build & run graph --------------------------
+                await streamer.status(
+                    "processing", "Processing query"
+                )
                 graph = build_chat_graph(
                     self.mode,
                     supervisor,
@@ -238,6 +271,9 @@ class ChatGraph:
                 response = _extract_response(result)
 
                 # --- stream the response to the client ----------
+                await streamer.status(
+                    "responding", "Streaming response"
+                )
                 await streamer.content_start()
                 await streamer.content_delta(response)
                 await streamer.content_end()
