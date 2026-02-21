@@ -19,7 +19,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from app.agents import ExecutionMode, create_chatbot_agent
+from app.agents import ExecutionMode, create_chat_graph
 from app.core.exceptions import AgentError
 
 logger = logging.getLogger(__name__)
@@ -27,9 +27,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
-def _agent_kwargs(request: "ChatRequest", **overrides) -> dict:
-    """Build kwargs for create_chatbot_agent, omitting None values so that
-    Pydantic default_factory fields activate correctly."""
+def _graph_kwargs(request: "ChatRequest", **overrides) -> dict:
+    """Build kwargs for create_chat_graph."""
     kwargs: dict = {
         "mode": ExecutionMode(request.mode.value),
         "enable_mcp": True,
@@ -97,8 +96,10 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
         """Generate SSE chunks for the chat response."""
         encoder = EventEncoder()
         try:
-            async with create_chatbot_agent(**_agent_kwargs(request)) as agent:
-                async for chunk in agent.chat_stream(
+            async with create_chat_graph(
+                **_graph_kwargs(request)
+            ) as graph:
+                async for chunk in graph.chat_stream(
                     request.message, request_id
                 ):
                     yield chunk
@@ -142,10 +143,12 @@ async def chat_complete(request: ChatRequest) -> ChatResponse:
     start_time = time.time()
 
     try:
-        kwargs = _agent_kwargs(request)
+        kwargs = _graph_kwargs(request)
         kwargs.setdefault("session_id", request_id)
-        async with create_chatbot_agent(**kwargs) as agent:
-            response = await agent.chat_complete(request.message, request_id)
+        async with create_chat_graph(**kwargs) as graph:
+            response = await graph.chat_complete(
+                request.message, request_id
+            )
 
         duration_ms = (time.time() - start_time) * 1000
 
