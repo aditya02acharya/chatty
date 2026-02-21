@@ -12,7 +12,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.agents.agent import ExecutionMode, SmartAgentHook, _extract_text
+from app.agents.hook import SmartAgentHook, extract_text as _extract_text
+from app.agents.mode import ExecutionMode
 from app.agents.result_compactor import MIN_COMPACT_SIZE, PASSTHROUGH_TOOLS
 from app.agents.session_fs import SessionStore
 

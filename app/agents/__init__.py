@@ -1,18 +1,16 @@
-"""Agents module for chatbot orchestration."""
+"""Agents module for chatbot orchestration.
 
-from app.agents.agent import (
-    ExecutionMode,
-    HybridChatbotAgent,
-    create_chatbot_agent,
-)
-from app.agents.nodes import (
-    ReflectionNode,
-    RoutingNode,
-    SynthesisNode,
-    ToolNode,
-    ToolNodeConfig,
-    ValidationNode,
-)
+Public API:
+    ChatGraph / create_chat_graph — multi-agent graph entry point.
+    ExecutionMode                 — FAST | AGENTIC | AUTO.
+    SmartAgentHook                — tool-result compaction hook.
+    SessionStore / SessionLifecycle — session filesystem.
+    MCPManager / create_mcp_manager — MCP integration.
+"""
+
+from app.agents.graph import ChatGraph, create_chat_graph
+from app.agents.hook import SmartAgentHook
+from app.agents.mode import ExecutionMode
 from app.agents.session_fs import (
     CleanupPolicy,
     IndexEntry,
@@ -20,40 +18,18 @@ from app.agents.session_fs import (
     SessionStore,
     create_session_store,
 )
-from app.agents.state import (
-    AgentState,
-    ConversationHistory,
-    ConversationMessage,
-    ToolCallResult,
-)
-from app.agents.tools import (
-    MCPManager,
-    ToolWrapper,
-    create_mcp_manager,
-    with_hooks,
-)
+from app.agents.tools import MCPManager, create_mcp_manager
 
 __all__ = [
+    "ChatGraph",
     "CleanupPolicy",
     "ExecutionMode",
-    "HybridChatbotAgent",
     "IndexEntry",
+    "MCPManager",
     "SessionLifecycle",
     "SessionStore",
-    "create_chatbot_agent",
-    "create_session_store",
-    "ReflectionNode",
-    "RoutingNode",
-    "SynthesisNode",
-    "ToolNode",
-    "ToolNodeConfig",
-    "ValidationNode",
-    "AgentState",
-    "ConversationHistory",
-    "ConversationMessage",
-    "ToolCallResult",
-    "MCPManager",
-    "ToolWrapper",
+    "SmartAgentHook",
+    "create_chat_graph",
     "create_mcp_manager",
-    "with_hooks",
+    "create_session_store",
 ]
