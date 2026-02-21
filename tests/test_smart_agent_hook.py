@@ -12,7 +12,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.agents.hook import SmartAgentHook, extract_text as _extract_text
+from app.agents.hook import SmartAgentHook
+from app.agents.hook import extract_text as _extract_text
 from app.agents.mode import ExecutionMode
 from app.agents.result_compactor import MIN_COMPACT_SIZE, PASSTHROUGH_TOOLS
 from app.agents.session_fs import SessionStore
@@ -118,11 +119,12 @@ class TestExtractText:
 
 
 class TestRegisterHooks:
-    def test_registers_callback(self, streamer):
+    def test_registers_callbacks(self, streamer):
         hook = _make_hook(streamer)
         registry = MagicMock()
         hook.register_hooks(registry)
-        registry.add_callback.assert_called_once()
+        # Registers both BeforeToolCallEvent and AfterToolCallEvent
+        assert registry.add_callback.call_count == 2
 
 
 # ---------------------------------------------------------------------------

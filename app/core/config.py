@@ -179,6 +179,39 @@ class BedrockSettings(YamlSettings):
     )
 
 
+class PostgresSettings(YamlSettings):
+    """PostgreSQL database configuration settings."""
+
+    _yaml_section: ClassVar[str] = "postgres"
+
+    dsn: str = Field(
+        default="postgresql://chatbot:chatbot@localhost:5432/chatbot",
+        description="PostgreSQL connection DSN",
+    )
+    min_pool_size: int = Field(
+        default=2,
+        description="Minimum connection pool size",
+        ge=1,
+    )
+    max_pool_size: int = Field(
+        default=10,
+        description="Maximum connection pool size",
+        ge=1,
+    )
+    statement_cache_size: int = Field(
+        default=100,
+        description="Prepared statement cache size",
+        ge=0,
+    )
+
+    model_config = SettingsConfigDict(
+        env_prefix="POSTGRES_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+
 class MCPSettings(YamlSettings):
     """MCP (Model Context Protocol) configuration settings."""
 
@@ -327,6 +360,7 @@ class Settings:
     def __init__(self):
         self.server = ServerSettings()
         self.bedrock = BedrockSettings()
+        self.postgres = PostgresSettings()
         self.mcp = MCPSettings()
         self.agent = AgentSettings()
         self.agui = AGUISettings()

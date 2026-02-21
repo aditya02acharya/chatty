@@ -6,11 +6,15 @@ Public API:
     SmartAgentHook                — tool-result compaction hook.
     SessionStore / SessionLifecycle — session filesystem.
     MCPManager / create_mcp_manager — MCP integration.
+    PostgresConversationManager   — PostgreSQL conversation history.
 """
 
 from app.agents.graph import ChatGraph, create_chat_graph
 from app.agents.hook import SmartAgentHook
 from app.agents.mode import ExecutionMode
+from app.agents.postgres_conversation_manager import (
+    PostgresConversationManager,
+)
 from app.agents.session_fs import (
     CleanupPolicy,
     IndexEntry,
@@ -26,6 +30,7 @@ __all__ = [
     "ExecutionMode",
     "IndexEntry",
     "MCPManager",
+    "PostgresConversationManager",
     "SessionLifecycle",
     "SessionStore",
     "SmartAgentHook",

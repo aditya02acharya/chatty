@@ -30,6 +30,12 @@ bedrock:
     top_p: 0.9
     stop_sequences: []
 
+postgres:
+  dsn: "postgresql://chatbot:chatbot@localhost:5432/chatbot"
+  min_pool_size: 2
+  max_pool_size: 10
+  statement_cache_size: 100
+
 mcp:
   timeout: 30
   max_retries: 2

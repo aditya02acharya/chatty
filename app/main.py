@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import chat, tools
 from app.core.config import settings
+from app.db import close_pool, ensure_schema, init_pool
 
 # Configure logging
 logging.basicConfig(
@@ -37,9 +38,22 @@ async def lifespan(app: FastAPI):
         len(settings.mcp.endpoints),
     )
 
+    # Initialise PostgreSQL pool and schema
+    try:
+        pool = await init_pool()
+        await ensure_schema(pool)
+        logger.info("PostgreSQL pool initialised")
+    except Exception:
+        logger.warning(
+            "PostgreSQL unavailable — conversation history "
+            "will not be persisted",
+            exc_info=True,
+        )
+
     yield
 
     # Shutdown
+    await close_pool()
     logger.info("Shutting down chatbot API")
 
 

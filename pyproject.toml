@@ -27,6 +27,9 @@ dependencies = [
     # Async HTTP
     "httpx>=0.28.0",
 
+    # Database
+    "asyncpg>=0.30.0",
+
     # Utilities
     "python-dotenv>=1.0.0",
     "pyyaml>=6.0.0",

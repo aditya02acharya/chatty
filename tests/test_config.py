@@ -25,6 +25,7 @@ def test_settings_creation(reset_settings):
     settings = Settings()
     assert settings.server is not None
     assert settings.bedrock is not None
+    assert settings.postgres is not None
     assert settings.mcp is not None
     assert settings.agent is not None
     assert settings.agui is not None
@@ -47,6 +48,15 @@ def test_bedrock_settings_defaults(reset_settings):
     assert settings.bedrock.region == "us-east-1"
     assert "claude" in settings.bedrock.models
     assert settings.bedrock.auth_method == "iam"
+
+
+def test_postgres_settings_defaults(reset_settings):
+    """Test PostgreSQL settings have correct defaults."""
+    settings = get_settings()
+    assert "postgresql://" in settings.postgres.dsn
+    assert settings.postgres.min_pool_size >= 1
+    assert settings.postgres.max_pool_size >= 1
+    assert settings.postgres.statement_cache_size >= 0
 
 
 def test_mcp_settings_defaults(reset_settings):
